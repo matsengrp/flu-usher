@@ -1,50 +1,68 @@
-# flu-usher
+# Flu-UShER Pipeline
 
-Notes from Angie on how to build pipeline
+A Snakemake pipeline for building phylogenetic trees of influenza virus sequences using UShER.
 
-## Aligning sequences to reference
+## Directory Structure
 
-Run nextclade like:
+```
+flu-usher/
+├── Snakefile                # Main pipeline file
+├── config/
+│   └── config.yaml          # Configuration file
+├── data/                    # Input data (organized by type.segment)
+│   ├── h7n9.ha/             # Example input directory
+│   │   ├── sequences.fasta  # Input sequences
+│   │   └── ...              # Nextclade reference data
+│   └── ...
+├── logs/                    # Log files (created by the pipeline)
+├── results/                 # Output results (organized by type.segment)
+└── scripts/
+    └── curate_msa.py        # Sequence curation script
+```
 
-nextclade run --input-dataset $nextcladeTypeSegDir \
-                --include-reference \
-                --jobs $threads \
-                --output-fasta aligned.$type.$segment.fa.xz \
-                >& nextalign.log
+## Usage
 
--- where $nextcladeTypeSegDir is a directory containing the reference sequence and nextclade config settings.
+1. **Set up your data**
 
-`data/NC_026425.1/` is what she uses for H7N9 HA
+   For each type-segment combination (e.g., h7n9.ha), create a directory under `data/` containing:
+   - `sequences.fasta`: Input sequences
+   - Nextclade reference dataset files
 
-## Convert MSA to VCF
+2. **Configure the pipeline**
 
-Then aligned.$type.$segment.fa.xz is an MSA fasta file with all of the sequences aligned to reference.  UShER doesn't read MSA fasta, it needs the input converted to VCF or the input format for the Maple aligner.  I wrote a little util that converts an MSA to VCF, faToVcf, available from bioconda (conda install ucsc-fatovcf).  Run faToVcf like this:
-xzcat aligned.$type.$segment.fa.xz \
-| faToVcf -includeRef -includeNoAltN stdin stdout \
-| gzip > aligned.$type.$segment.vcf.gz
+   Edit `config/config.yaml` to:
+   - List your types and segments
+   - Set gene-specific parameters
+   - Adjust filtering thresholds
+   - Set desired number of threads
 
-# Build tree
+3. **Run the pipeline**
 
-Then (assuming you have already done 'conda install usher') run usher-sampled like this:
-echo '()' > emptyTree.nwk
-usher-sampled -T $threads -A -e 5 \
-    -t emptyTree.nwk \
-    -v aligned.$type.$segment.vcf.gz \
-    -o fluA.$type.$segment.preFilter.pb.gz \
-    --optimization_radius 0 --batch_size_per_process 100 \
-    > usher-sampled.$type.$segment.log 2> usher-sampled.$type.$segment.stderr
+   ```bash
+   # Test run (dry-run)
+   snakemake -np
+   
+   # Run the pipeline
+   snakemake --cores <number_of_cores>
+   
+   # Run for specific type-segment combinations
+   snakemake --cores <number_of_cores> results/h7n9.ha/opt_tree.pb.gz
+   ```
 
-This step may not be necessary since you have already limited your input sequences to H7N9, but I apply a branch length filter and max number of private mutations filter:
-matUtils extract -i fluA.$type.$segment.preFilter.pb.gz \
-    --max-branch-length 250 \
-    --max-parsimony 100 \
-    -O -o fluA.$type.$segment.preOpt.pb.gz
-Then I run matOptimize:
-matOptimize -T $threads -m 0.00000001 -M 1 \
-    -i fluA.$type.$segment.preOpt.pb.gz \
-    -v aligned.$type.$segment.vcf.gz \
-    -o fluA.$type.$segment.pb.gz
+4. **Output**
 
-# Taxomium
+   For each type-segment combination, the pipeline produces:
+   - `results/<type>.<segment>/msa.fasta.xz`: Aligned sequences
+   - `results/<type>.<segment>/curated_msa.fasta.xz`: Curated alignment
+   - `results/<type>.<segment>/curated_msa.vcf.gz`: VCF format for UShER
+   - `results/<type>.<segment>/preopt_tree.pb.gz`: Initial UShER tree
+   - `results/<type>.<segment>/opt_tree.pb.gz`: Optimized tree
 
-Then I run usher_to_taxonium so I can view the tree in taxonium.  Let me know if you want to do that too.  The options to pass to usher_to_taxonium depend on what your metadata file looks like.
+## Requirements
+
+- Snakemake
+- Nextclade
+- UShER
+- matOptimize
+- faToVcf (from UCSC)
+- Python with Biopython
