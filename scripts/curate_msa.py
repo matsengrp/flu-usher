@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Script to curate multiple sequence alignments (MSA) for flu-usher pipeline.
 Based on curate_alignment.ipynb notebook.
