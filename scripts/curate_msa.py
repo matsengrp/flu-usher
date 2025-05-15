@@ -1,11 +1,11 @@
 """
 Script to curate multiple sequence alignments (MSA) for flu-usher pipeline.
-Based on curate_alignment.ipynb notebook.
 """
 
 import argparse
 import lzma
 import logging
+import re
 from Bio import SeqIO
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
@@ -23,13 +23,56 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Curate MSA for flu-usher pipeline')
     parser.add_argument('--input', required=True, help='Input MSA file (xz compressed)')
     parser.add_argument('--output', required=True, help='Output curated MSA file (xz compressed)')
-    parser.add_argument('--gene_start', type=int, required=True, help='Gene start position (1-based)')
-    parser.add_argument('--gene_end', type=int, required=True, help='Gene end position (1-based)')
+    parser.add_argument('--gff', required=True, help='GFF file with gene annotation')
+    parser.add_argument('--gene-name', required=True, help='Name of gene to extract from GFF')
     parser.add_argument('--max_frac_gaps', type=float, default=0.05, 
                         help='Maximum fraction of gaps allowed in a sequence')
     parser.add_argument('--max_frac_ambig', type=float, default=0.01, 
                         help='Maximum fraction of ambiguous nucleotides allowed')
     return parser.parse_args()
+
+def extract_gene_coordinates(gff_file, gene_name):
+    """
+    Extract gene start and end positions from a GFF file
+    
+    Args:
+        gff_file: Path to GFF file
+        gene_name: Name of the gene to extract
+    
+    Returns:
+        tuple: (start, end) coordinates (1-based)
+    """
+    logger = logging.getLogger(__name__)
+    
+    # Regular expressions for parsing GFF
+    re_gff = re.compile(r'([^\t]+)\t([^\t]+)\t([^\t]+)\t(\d+)\t(\d+)\t([^\t]+)\t([^\t]+)\t([^\t]+)\t([^\t]*)')
+    
+    logger.info(f"Extracting coordinates for gene '{gene_name}' from {gff_file}")
+    
+    with open(gff_file, 'r') as f:
+        for line in f:
+            # Skip comment lines
+            if line.startswith('#'):
+                continue
+                
+            match = re_gff.match(line)
+            if not match:
+                continue
+                
+            seqid, source, feature_type, start, end, score, strand, phase, attributes = match.groups()
+            
+            # Convert to integers
+            start, end = int(start), int(end)
+            
+            # Look for gene or CDS features
+            if feature_type.lower() in ('gene', 'cds'):
+                # Check if gene name matches in the attributes
+                if f"ID={gene_name}" in attributes or f"Name={gene_name}" in attributes or f"gene={gene_name}" in attributes:
+                    logger.info(f"Found gene '{gene_name}' at position {start}-{end}")
+                    return start, end
+    
+    # If we get here, no matching gene was found
+    raise ValueError(f"Could not find gene '{gene_name}' in {gff_file}")
 
 def slice_record(record, gene_start, gene_end):
     """
@@ -140,14 +183,22 @@ def main():
     args = parse_args()
     logger = setup_logging()
     
+    # Extract gene coordinates from the GFF file
+    try:
+        gene_start, gene_end = extract_gene_coordinates(args.gff, args.gene_name)
+        logger.info(f"Using gene coordinates from GFF: {gene_start}-{gene_end}")
+    except Exception as e:
+        logger.error(f"Failed to extract coordinates for gene '{args.gene_name}': {e}")
+        return 1
+        
     logger.info(f"Reading alignment from {args.input}")
     with lzma.open(args.input, 'rt') as handle:
         records = list(SeqIO.parse(handle, 'fasta'))
     
     logger.info(f"Read {len(records)} sequences")
     
-    logger.info(f"Slicing sequences to region {args.gene_start}-{args.gene_end}")
-    sliced_records = [slice_record(record, args.gene_start, args.gene_end) for record in records]
+    logger.info(f"Slicing sequences to region {gene_start}-{gene_end}")
+    sliced_records = [slice_record(record, gene_start, gene_end) for record in records]
     
     ambiguous_characters = get_ambiguous_chars(sliced_records)
     logger.info(f"Identified ambiguous characters: {ambiguous_characters}")
@@ -166,6 +217,7 @@ def main():
         SeqIO.write(curated_records, handle, 'fasta')
     
     logger.info(f"Retained {len(curated_records)}/{len(records)} sequences ({len(curated_records)/len(records)*100:.1f}%)")
+    return 0
 
 if __name__ == "__main__":
-    main()
+    exit(main())

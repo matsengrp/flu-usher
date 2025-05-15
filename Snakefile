@@ -12,11 +12,32 @@ rule all:
                type=config["types"], 
                segment=config["segments"])
 
+# Download reference sequence and prepare Nextclade dataset
+rule download_reference:
+    output:
+        directory("results/{type}-{segment}/reference/"),
+        gff="results/{type}-{segment}/reference/reference.gff",
+        fasta="results/{type}-{segment}/reference/reference.fasta",
+        json="results/{type}-{segment}/reference/pathogen.json"
+    params:
+        accession=lambda wildcards: config["references"][f"{wildcards.type}_{wildcards.segment}"]
+    log:
+        "logs/{type}-{segment}/download_reference.log"
+    shell:
+        """
+        python scripts/download_ref_seq.py \
+            --type {wildcards.type} \
+            --segment {wildcards.segment} \
+            --accession {params.accession} \
+            --output-dir {output[0]} \
+            &> {log}
+        """
+
 # Align sequences to the reference using nextclade
 rule align_sequences:
     input:
         sequences="data/{type}-{segment}/{type}-{segment}.fasta",
-        dataset_dir="data/{type}-{segment}"
+        dataset_dir="results/{type}-{segment}/reference/"
     output:
         alignment="results/{type}-{segment}/msa.fasta.xz"
     threads: config["threads"]
@@ -24,7 +45,6 @@ rule align_sequences:
         "logs/{type}-{segment}/nextclade.log"
     shell:
         """
-        mkdir -p $(dirname {log})
         nextclade run {input.sequences} \
             --input-dataset {input.dataset_dir} \
             --include-reference \
@@ -32,30 +52,26 @@ rule align_sequences:
             >& {log}
         """
 
-# Curate the alignment to remove problematic sequences and remove problematic
-# characters from sequence IDs
+# Curate the alignment to only include CDSs and to sanitize IDs
 rule curate_alignment:
     input:
-        "results/{type}-{segment}/msa.fasta.xz"
+        alignment="results/{type}-{segment}/msa.fasta.xz",
+        gff="results/{type}-{segment}/reference/reference.gff"
     output:
-        "results/{type}-{segment}/curated_msa.fasta.xz"
+        curated="results/{type}-{segment}/curated_msa.fasta.xz"
     params:
-        gene_start=lambda wildcards: config["gene_params"][wildcards.segment]["start"],
-        gene_end=lambda wildcards: config["gene_params"][wildcards.segment]["end"],
-        max_frac_gaps=config["max_frac_gaps"],
-        max_frac_ambig=config["max_frac_ambig"]
+        gene_name=lambda wildcards: wildcards.segment
     log:
         "logs/{type}-{segment}/curate.log"
     shell:
         """
-        mkdir -p $(dirname {log})
         python scripts/curate_msa.py \
-            --input {input} \
-            --output {output} \
-            --gene_start {params.gene_start} \
-            --gene_end {params.gene_end} \
-            --max_frac_gaps {params.max_frac_gaps} \
-            --max_frac_ambig {params.max_frac_ambig} \
+            --input {input.alignment} \
+            --output {output.curated} \
+            --gff {input.gff} \
+            --gene-name {params.gene_name} \
+            --max_frac_gaps {config[max_frac_gaps]} \
+            --max_frac_ambig {config[max_frac_ambig]} \
             &> {log}
         """
 
@@ -87,7 +103,6 @@ rule create_initial_tree:
         stderr="logs/{type}-{segment}/usher-sampled.stderr"
     shell:
         """
-        mkdir -p $(dirname {log.stdout})
         echo '()' > {output.empty_tree}
         usher-sampled -T {threads} -A -e 5 \
             -t {output.empty_tree} \
@@ -110,7 +125,6 @@ rule optimize_tree:
         "logs/{type}-{segment}/optimize.log"
     shell:
         """
-        mkdir -p $(dirname {log})
         matOptimize -T {threads} -m 0.00000001 -M 1 \
             -i {input.tree} \
             -v {input.vcf} \
@@ -128,6 +142,5 @@ rule convert_to_taxonium:
         "logs/{type}-{segment}/taxonium.log"
     shell:
         """
-        mkdir -p $(dirname {log})
         usher_to_taxonium --input {input} --output {output} &> {log}
         """

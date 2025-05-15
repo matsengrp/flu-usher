@@ -1,7 +1,7 @@
 # Configuration for flu-usher pipeline
 
 # General settings
-threads: 10
+threads: 16
 
 # Types and segments to analyze
 types:
@@ -9,12 +9,10 @@ types:
 segments:
   - "HA"
 
-# Parameters for curation
+# Reference accession numbers for each type-segment combination
+references:
+  "H7N9_HA": "NC_026425.1"
+
+# Parameters for sequence curation
 max_frac_gaps: 0.05
 max_frac_ambig: 0.01
-
-# Gene-specific parameters
-gene_params:
-  HA:
-    start: 1
-    end: 1683

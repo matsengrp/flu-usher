@@ -4,6 +4,11 @@ A Snakemake pipeline for building phylogenetic trees of influenza virus sequence
 
 ## TODO
 * View tree using taxonium
+* Incorporating metadata
+   * When downloading, only include EPI_ISL, subtype, segment
+   * Download all segments at once, then add a step that splits them into separate files?
+   * In curation step, simplify header to only include EPI_ISL
+   * Add CSV of metadata file with a specific subset of columns
 * Update pipeline to read in gene start and end from a gff3 file, rather than defining these things in the config
 * Apply to other segments and subtypes
 
