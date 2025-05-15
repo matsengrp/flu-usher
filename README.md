@@ -9,6 +9,10 @@ flu-usher/
 ├── Snakefile                # Main pipeline file
 ├── config/
 │   └── config.yaml          # Configuration file
+├── data/                    # Input data (organized by type-segment)
+│   ├── H7N9-HA/             # Example input directory
+│   │   └── H7N9-HA.fasta    # Input sequences
+│   └── ...
 ├── logs/                    # Log files (created by the pipeline)
 ├── results/                 # Output results (organized by type-segment)
 ├── scripts/
@@ -37,7 +41,13 @@ flu-usher/
    - Adjust filtering thresholds for sequence curation
    - Set desired number of threads
 
-3. **Run the pipeline**
+3. **Prepare your input data**
+
+   For each type-segment combination you want to analyze (e.g., H7N9-HA), create:
+   - A directory under `data/` with the name `{type}-{segment}` (e.g., `data/H7N9-HA/`)
+   - A FASTA file inside that directory with the same name as the directory (e.g., `data/H7N9-HA/H7N9-HA.fasta`)
+
+4. **Run the pipeline**
 
    ```bash
    # Test run (dry-run)
@@ -50,7 +60,7 @@ flu-usher/
    snakemake --cores <number_of_cores> results/H7N9-HA/opt_tree.pb.gz
    ```
 
-4. **Output**
+5. **Output**
 
    For each type-segment combination, the pipeline produces:
    - `results/<type>-<segment>/reference/`: Reference data for Nextclade
