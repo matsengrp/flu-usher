@@ -2,6 +2,11 @@
 
 A Snakemake pipeline for building phylogenetic trees of influenza virus sequences using UShER.
 
+## TODO
+* View tree using taxonium
+* Update pipeline to read in gene start and end from a gff3 file, rather than defining these things in the config
+* Apply to other segments and subtypes
+
 ## Directory Structure
 
 ```

@@ -50,14 +50,17 @@ def slice_record(record, gene_start, gene_end):
     
     # Sanitize the sequence ID by replacing problematic characters with underscores
     sanitized_id = record.id
-    for char in ['[', ']', '(', ')', ':', ';', ',']:
+    for char in ['[', ']', '(', ')', ':', ';', ',', "'"]:
         sanitized_id = sanitized_id.replace(char, '_')
     
+    if ' ' in sanitized_id:
+        raise ValueError(record.id)
+
     # Create a new SeqRecord with the sliced sequence and sanitized ID
     new_record = SeqRecord(
         Seq(sliced_seq),
         id=sanitized_id,
-        description=record.description
+        description=sanitized_id
     )
     return new_record
 

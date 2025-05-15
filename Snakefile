@@ -7,6 +7,9 @@ rule all:
     input:
         expand("results/{type}-{segment}/opt_tree.pb.gz", 
                type=config["types"], 
+               segment=config["segments"]),
+        expand("results/{type}-{segment}/opt_tree.jsonl.gz", 
+               type=config["types"], 
                segment=config["segments"])
 
 # Align sequences to the reference using nextclade
@@ -113,4 +116,18 @@ rule optimize_tree:
             -v {input.vcf} \
             -o {output} \
             &> {log}
+        """
+
+# Convert the optimized tree to Taxonium format for visualization
+rule convert_to_taxonium:
+    input:
+        "results/{type}-{segment}/opt_tree.pb.gz"
+    output:
+        "results/{type}-{segment}/opt_tree.jsonl.gz"
+    log:
+        "logs/{type}-{segment}/taxonium.log"
+    shell:
+        """
+        mkdir -p $(dirname {log})
+        usher_to_taxonium --input {input} --output {output} &> {log}
         """
