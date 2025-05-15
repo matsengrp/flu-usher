@@ -12,7 +12,8 @@ rule all:
                type=config["types"], 
                segment=config["segments"])
 
-# Download reference sequence and prepare Nextclade dataset
+# Download the reference sequence and corresponding GFF, create a Nextclade pathogen.json file,
+# and save these files in the same directory as input to Nextclade
 rule download_reference:
     output:
         directory("results/{type}-{segment}/reference/"),
@@ -33,7 +34,7 @@ rule download_reference:
             &> {log}
         """
 
-# Align sequences to the reference using nextclade
+# Use Nextclade to align sequences to the reference
 rule align_sequences:
     input:
         sequences="data/{type}-{segment}/{type}-{segment}.fasta",
@@ -52,7 +53,8 @@ rule align_sequences:
             >& {log}
         """
 
-# Curate the alignment to only include CDSs and to sanitize IDs
+# Curate the alignment to only include sites in the CDS of the reference, and sanitize IDs
+# so that they do not include special characters that lead to errors in UShER jobs
 rule curate_alignment:
     input:
         alignment="results/{type}-{segment}/msa.fasta.xz",
