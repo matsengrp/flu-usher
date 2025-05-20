@@ -2,6 +2,16 @@
 
 A Snakemake pipeline for building phylogenetic trees of influenza virus sequences using UShER.
 
+## TODO
+
+* compress raw sequences
+* H7N9 HA and NA
+* H3N2 HA multiple files
+* download all H3N2 data
+* summary plots for alignments: number downloaded, length distribution, number retained
+* add metadata to taxonium tree
+* rerooting (genome with sequences for all segments)
+
 ## Directory Structure
 
 ```
@@ -69,18 +79,18 @@ flu-usher/
 5. **Output**
 
    For each subtype-segment combination, the pipeline produces:
-   - `results/<subtype>-<segment>/raw_sequences.fasta`: Parsed sequences for this segment
-   - `results/<subtype>-<segment>/reference/`: Reference data for Nextclade
-   - `results/<subtype>-<segment>/msa.fasta.xz`: Aligned sequences
-   - `results/<subtype>-<segment>/curated_msa.fasta.xz`: Curated alignment
-   - `results/<subtype>-<segment>/curated_msa.vcf.gz`: VCF format for UShER
-   - `results/<subtype>-<segment>/preopt_tree.pb.gz`: Initial UShER tree
-   - `results/<subtype>-<segment>/opt_tree.pb.gz`: Optimized tree
-   - `results/<subtype>-<segment>/opt_tree.jsonl.gz`: Taxonium visualization file
+   - `results/<subtype>/<segment>/raw_sequences.fasta`: Parsed sequences for this segment
+   - `results/<subtype>/<segment>/reference/`: Reference data for Nextclade
+   - `results/<subtype>/<segment>/msa.fasta.xz`: Aligned sequences
+   - `results/<subtype>/<segment>/curated_msa.fasta.xz`: Curated alignment
+   - `results/<subtype>/<segment>/curated_msa.vcf.gz`: VCF format for UShER
+   - `results/<subtype>/<segment>/preopt_tree.pb.gz`: Initial UShER tree
+   - `results/<subtype>/<segment>/opt_tree.pb.gz`: Optimized tree
+   - `results/<subtype>/<segment>/opt_tree.jsonl.gz`: Taxonium visualization file
 
 ## Pipeline Steps
 
-1. **Parse GISAID data**: Splits combined FASTA files into segment-specific files
+1. **Parse GISAID data**: Splits combined FASTA files into segment-specific files and creates metadata file
 2. **Download reference**: Fetches reference sequences and creates Nextclade dataset
 3. **Align sequences**: Uses Nextclade to align sequences to reference
 4. **Curate alignment**: Extracts coding regions and sanitizes sequence IDs
