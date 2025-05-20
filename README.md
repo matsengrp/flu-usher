@@ -4,8 +4,7 @@ A Snakemake pipeline for building phylogenetic trees of influenza virus sequence
 
 ## TODO
 
-* make new gff file
-* H7N9 HA and NA
+* troubleshoot H7N9 NA
 * H3N2 HA multiple files
 * download all H3N2 data
 * summary plots for alignments: number downloaded, length distribution, number retained
@@ -79,11 +78,12 @@ flu-usher/
 
 5. **Output**
 
-   For each subtype-segment combination, the pipeline produces:
+   For each subtype/segment combination, the pipeline produces:
    - `results/<subtype>/<segment>/raw_sequences.fasta`: Parsed sequences for this segment
    - `results/<subtype>/<segment>/reference/`: Reference data for Nextclade
    - `results/<subtype>/<segment>/msa.fasta.xz`: Aligned sequences
    - `results/<subtype>/<segment>/curated_msa.fasta.xz`: Curated alignment
+   - `results/<subtype>/<segment>/curated_reference.gff`: GFF that matches the curated alignment
    - `results/<subtype>/<segment>/curated_msa.vcf.gz`: VCF format for UShER
    - `results/<subtype>/<segment>/preopt_tree.pb.gz`: Initial UShER tree
    - `results/<subtype>/<segment>/opt_tree.pb.gz`: Optimized tree

@@ -72,7 +72,8 @@ rule align_sequences:
         """
 
 # Curate the alignment to only include sites in the CDS of the reference, and sanitize IDs
-# so that they do not include special characters that lead to errors in UShER jobs
+# so that they do not include special characters that lead to errors in UShER jobs. Also
+# output a new GFF file that matches the curated MSA.
 rule curate_alignment:
     input:
         alignment="results/{subtype}/{segment}/msa.fasta.xz",
@@ -142,12 +143,11 @@ rule optimize_tree:
         vcf="results/{subtype}/{segment}/curated_msa.vcf.gz"
     output:
         "results/{subtype}/{segment}/opt_tree.pb.gz"
-    threads: config["threads"]
     log:
         "logs/{subtype}/{segment}/optimize.log"
     shell:
         """
-        matOptimize -T {threads} -m 0.00000001 -M 1 \
+        matOptimize -T 2 -m 0.00000001 -M 1 \
             -i {input.tree} \
             -v {input.vcf} \
             -o {output} \

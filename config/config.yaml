@@ -7,7 +7,7 @@ threads: 16
 subtypes:
   - "H7N9"
 segments:
-  - "HA"
+  - "NA"
 
 # Reference accession numbers for each type-segment combination
 references:
