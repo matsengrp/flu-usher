@@ -47,6 +47,9 @@ def main():
     epi_ids = set()
     epi_isl_ids = set()
     
+    # Track which EPI_ISL IDs have been seen for each segment
+    segment_epi_isl_ids = defaultdict(set)
+    
     # List of segments to keep (from config file or all segments if not specified)
     valid_segments = set(args.segments) if args.segments else None
     
@@ -74,6 +77,12 @@ def main():
                     continue
                 epi_ids.add(epi)
                 
+                # Skip record if we've already seen this EPI_ISL ID for this segment
+                if epi_isl in segment_epi_isl_ids[segment]:
+                    print(f"Warning: Duplicate EPI_ISL ID {epi_isl} found for segment {segment}. Skipping record.")
+                    continue
+                segment_epi_isl_ids[segment].add(epi_isl)
+                
                 # Check that the subtype matches what we expect
                 if not seq_subtype.endswith(args.subtype):
                     print(f"Warning: Record {record.id} has mismatched subtype: {seq_subtype} vs expected {args.subtype}")
@@ -94,13 +103,14 @@ def main():
     print(f"\nTotal unique EPI_ISL IDs: {len(epi_isl_ids)}")
     print("\nSummary of records by segment:")
     for segment, records in segment_records.items():
+        assert len(records) == len(segment_epi_isl_ids[segment]), "Mismatch between number of records and EPI_ISL IDs"
         segment_output_dir = os.path.join(args.output_dir, segment)
         if not os.path.isdir(segment_output_dir):
             os.makedirs(segment_output_dir)
         output_file = os.path.join(segment_output_dir, "raw_sequences.fasta.xz")
         with lzma.open(output_file, 'wt') as handle:
             SeqIO.write(records, handle, "fasta")
-        print(f"Segment {segment}: {len(records)} records written to {output_file}")
+        print(f"Segment {segment}: {len(records)} records written to {output_file}") 
     
     # Load all metadata and write to an output CSV file
     dfs = []
