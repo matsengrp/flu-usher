@@ -4,11 +4,12 @@ A Snakemake pipeline for building phylogenetic trees of influenza virus sequence
 
 ## TODO
 
-* compress raw sequences
+* make new gff file
 * H7N9 HA and NA
 * H3N2 HA multiple files
 * download all H3N2 data
 * summary plots for alignments: number downloaded, length distribution, number retained
+* only keep a few metadata columns?
 * add metadata to taxonium tree
 * rerooting (genome with sequences for all segments)
 
@@ -21,8 +22,8 @@ flu-usher/
 │   └── config.yaml          # Configuration file
 ├── data/                    # Input data directory (organized by subtype)
 │   └── H7N9/                # Example input directory for H7N9 subtype
-│       ├── sequences.fasta  # FASTA file containing sequences
-│       └── metadata.xls     # Metadata in Excel format
+│       ├── sequences.fasta  # One or more FASTA files containing sequences
+│       └── metadata.xls     # One or more metadata files in Excel format
 ├── logs/                    # Log files (created by the pipeline)
 ├── results/                 # Output results (organized by subtype-segment)
 ├── scripts/

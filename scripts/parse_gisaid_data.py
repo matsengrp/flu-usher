@@ -6,6 +6,7 @@ import argparse
 import os
 import sys
 import glob
+import lzma
 import pandas as pd
 from Bio import SeqIO
 from Bio.SeqRecord import SeqRecord
@@ -89,15 +90,16 @@ def main():
                 print(f"Warning: Could not parse ID for record: {record.id}")
                 continue
     
-    # For each segment, print summary and then write the records to a FASTA file
+    # For each segment, print summary and then write the records to a compressed XZ FASTA file
     print(f"\nTotal unique EPI_ISL IDs: {len(epi_isl_ids)}")
     print("\nSummary of records by segment:")
     for segment, records in segment_records.items():
         segment_output_dir = os.path.join(args.output_dir, segment)
         if not os.path.isdir(segment_output_dir):
             os.makedirs(segment_output_dir)
-        output_file = os.path.join(segment_output_dir, "raw_sequences.fasta")
-        SeqIO.write(records, output_file, "fasta")
+        output_file = os.path.join(segment_output_dir, "raw_sequences.fasta.xz")
+        with lzma.open(output_file, 'wt') as handle:
+            SeqIO.write(records, handle, "fasta")
         print(f"Segment {segment}: {len(records)} records written to {output_file}")
     
     # Load all metadata and write to an output CSV file

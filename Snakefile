@@ -16,7 +16,7 @@ rule all:
 rule parse_gisaid_data:
     output:
         metadata="results/{subtype}/{subtype}_metadata.csv",
-        fastas=expand("results/{{subtype}}/{segment}/raw_sequences.fasta", 
+        fastas=expand("results/{{subtype}}/{segment}/raw_sequences.fasta.xz", 
                       segment=config["segments"])
     log:
         "logs/{subtype}/parse_gisaid_data.log"
@@ -52,7 +52,7 @@ rule download_reference:
 # Use Nextclade to align sequences to the reference
 rule align_sequences:
     input:
-        sequences="results/{subtype}/{segment}/raw_sequences.fasta",
+        sequences="results/{subtype}/{segment}/raw_sequences.fasta.xz",
         dataset_dir="results/{subtype}/{segment}/reference/",
         reference_gff="results/{subtype}/{segment}/reference/reference.gff",
         reference_fasta="results/{subtype}/{segment}/reference/reference.fasta",

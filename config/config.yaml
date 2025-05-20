@@ -12,6 +12,7 @@ segments:
 # Reference accession numbers for each type-segment combination
 references:
   "H7N9_HA": "NC_026425.1"
+  "H7N9_NA": "NC_026429.1"
 
 # Parameters for sequence curation
 max_frac_gaps: 0.05
