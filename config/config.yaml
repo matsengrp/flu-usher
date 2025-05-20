@@ -4,7 +4,7 @@
 threads: 16
 
 # Types and segments to analyze
-types:
+subtypes:
   - "H7N9"
 segments:
   - "HA"

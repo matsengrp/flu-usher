@@ -6,8 +6,6 @@ import sys
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Download reference sequences for flu-usher")
-    parser.add_argument("--type", required=True, help="Flu type (e.g., H7N9)")
-    parser.add_argument("--segment", required=True, help="Segment name (e.g., HA)")
     parser.add_argument("--accession", required=True, help="Reference sequence accession number")
     parser.add_argument("--output-dir", required=True, help="Output directory for reference files")
     return parser.parse_args()
