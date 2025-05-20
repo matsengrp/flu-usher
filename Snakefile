@@ -78,7 +78,8 @@ rule curate_alignment:
         alignment="results/{subtype}/{segment}/msa.fasta.xz",
         gff="results/{subtype}/{segment}/reference/reference.gff"
     output:
-        curated="results/{subtype}/{segment}/curated_msa.fasta.xz"
+        curated="results/{subtype}/{segment}/curated_msa.fasta.xz",
+        curated_gff="results/{subtype}/{segment}/curated_reference.gff"
     params:
         gene_name=lambda wildcards: wildcards.segment
     log:
@@ -90,6 +91,7 @@ rule curate_alignment:
             --output {output.curated} \
             --gff {input.gff} \
             --gene-name {params.gene_name} \
+            --output-gff {output.curated_gff} \
             --max_frac_gaps {config[max_frac_gaps]} \
             --max_frac_ambig {config[max_frac_ambig]} \
             &> {log}

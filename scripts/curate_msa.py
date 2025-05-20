@@ -6,6 +6,7 @@ import argparse
 import lzma
 import logging
 import re
+import os
 from Bio import SeqIO
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
@@ -25,6 +26,7 @@ def parse_args():
     parser.add_argument('--output', required=True, help='Output curated MSA file (xz compressed)')
     parser.add_argument('--gff', required=True, help='GFF file with gene annotation')
     parser.add_argument('--gene-name', required=True, help='Name of gene to extract from GFF')
+    parser.add_argument('--output-gff', help='Output a matching GFF file (optional)')
     parser.add_argument('--max_frac_gaps', type=float, default=0.05, 
                         help='Maximum fraction of gaps allowed in a sequence')
     parser.add_argument('--max_frac_ambig', type=float, default=0.01, 
@@ -40,7 +42,7 @@ def extract_gene_coordinates(gff_file, gene_name):
         gene_name: Name of the gene to extract
     
     Returns:
-        tuple: (start, end) coordinates (1-based)
+        tuple: (start, end) coordinates (1-based), phase, strand, attributes
     """
     logger = logging.getLogger(__name__)
     
@@ -69,10 +71,40 @@ def extract_gene_coordinates(gff_file, gene_name):
                 # Check if gene name matches in the attributes
                 if f"ID={gene_name}" in attributes or f"Name={gene_name}" in attributes or f"gene={gene_name}" in attributes:
                     logger.info(f"Found gene '{gene_name}' at position {start}-{end}")
-                    return start, end
+                    return start, end, phase, strand, attributes
     
     # If we get here, no matching gene was found
     raise ValueError(f"Could not find gene '{gene_name}' in {gff_file}")
+
+def create_matching_gff(output_file, gene_name, original_start, original_end, phase, strand, attributes):
+    """
+    Create a simplified GFF file with adjusted coordinates
+    
+    Args:
+        output_file: Path to output GFF file
+        gene_name: Name of the gene
+        original_start: Original start position (1-based)
+        original_end: Original end position (1-based)
+        phase: Original phase
+        strand: Original strand
+        attributes: Original attributes
+    """
+    logger = logging.getLogger(__name__)
+    
+    # Calculate new coordinates (start at 1)
+    new_length = original_end - original_start + 1
+    
+    # Create GFF content
+    gff_content = "##gff-version 3\n"
+    gff_content += f"##sequence-region Reference 1 {new_length}\n"
+    gff_content += f"Reference\tCurated\tCDS\t1\t{new_length}\t.\t{strand}\t{phase}\tID={gene_name};Name={gene_name}\n"
+    
+    # Write to file
+    with open(output_file, 'w') as f:
+        f.write(gff_content)
+    
+    logger.info(f"Created simplified GFF file at {output_file}")
+    logger.info(f"Adjusted coordinates: 1-{new_length} (original: {original_start}-{original_end})")
 
 def slice_record(record, gene_start, gene_end):
     """
@@ -183,23 +215,32 @@ def main():
     args = parse_args()
     logger = setup_logging()
     
-    # Extract gene coordinates from the GFF file
+    # Extract gene coordinates from the GFF file and write a simplified GFF file
     try:
-        gene_start, gene_end = extract_gene_coordinates(args.gff, args.gene_name)
+        gene_start, gene_end, phase, strand, attributes = extract_gene_coordinates(args.gff, args.gene_name)
         logger.info(f"Using gene coordinates from GFF: {gene_start}-{gene_end}")
+        
+        # If output GFF file is specified, create a GFF file reindexed to 1
+        # for the gene of interest so that it matches the new MSA
+        if args.output_gff:
+            create_matching_gff(args.output_gff, args.gene_name, gene_start, gene_end, phase, strand, attributes)
+            
     except Exception as e:
         logger.error(f"Failed to extract coordinates for gene '{args.gene_name}': {e}")
         return 1
         
+    # Read in the MSA
     logger.info(f"Reading alignment from {args.input}")
     with lzma.open(args.input, 'rt') as handle:
         records = list(SeqIO.parse(handle, 'fasta'))
     
     logger.info(f"Read {len(records)} sequences")
     
+    # Slice the sequences to the CDS of interest and santitize the IDs
     logger.info(f"Slicing sequences to region {gene_start}-{gene_end}")
     sliced_records = [slice_record(record, gene_start, gene_end) for record in records]
     
+    # Filter sequences with too many gaps or ambiguous characters
     ambiguous_characters = get_ambiguous_chars(sliced_records)
     logger.info(f"Identified ambiguous characters: {ambiguous_characters}")
     
@@ -212,6 +253,7 @@ def main():
         logger
     )
     
+    # Write the curated sequences to an output FASTA file
     logger.info(f"Writing {len(curated_records)} curated sequences to {args.output}")
     with lzma.open(args.output, 'wt') as handle:
         SeqIO.write(curated_records, handle, 'fasta')
