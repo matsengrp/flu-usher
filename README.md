@@ -4,11 +4,8 @@ A Snakemake pipeline for building phylogenetic trees of influenza virus sequence
 
 ## TODO
 
-* troubleshoot H7N9 NA
-* H3N2 HA multiple files
-* download all H3N2 data
+* run H3N2 HA
 * summary plots for alignments: number downloaded, length distribution, number retained
-* only keep a few metadata columns?
 * add metadata to taxonium tree
 * rerooting (genome with sequences for all segments)
 

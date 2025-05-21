@@ -1,16 +1,20 @@
 # Configuration for flu-usher pipeline
 
 # General settings
-threads: 16
+threads: 10
 
 # Types and segments to analyze
 subtypes:
-  - "H7N9"
+  - "H3N2"
+  # - "H7N9"
 segments:
-  - "NA"
+  - "HA"
+  # - "NA"
 
 # Reference accession numbers for each type-segment combination
 references:
+  "H3N2_HA": "NC_007366.1"
+
   "H7N9_HA": "NC_026425.1"
   "H7N9_NA": "NC_026429.1"
 

@@ -44,7 +44,6 @@ def main():
     # Iterate over sequences, group by segment, and make one FASTA file per
     # segment with all sequences for that segment
     segment_records = defaultdict(list)
-    epi_ids = set()
     epi_isl_ids = set()
     
     # Track which EPI_ISL IDs have been seen for each segment
@@ -70,12 +69,6 @@ def main():
                 # Skip segments not in the config file
                 if valid_segments and segment not in valid_segments:
                     continue
-                
-                # Skip record if we've already seen this epi ID
-                if epi in epi_ids:
-                    print(f"Warning: Duplicate EPI ID {epi} found. Skipping record.")
-                    continue
-                epi_ids.add(epi)
                 
                 # Skip record if we've already seen this EPI_ISL ID for this segment
                 if epi_isl in segment_epi_isl_ids[segment]:
@@ -115,22 +108,35 @@ def main():
     # Load all metadata and write to an output CSV file
     dfs = []
     for metadata_file in metadata_files:
+        
         # Read in data from the first sheet
         df = pd.read_excel(metadata_file, sheet_name=0)
         print(f"Read {len(df)} records from {metadata_file}")
+        
+        # Subset to a few columns of interest
+        cols = [
+            'Isolate_Id', 'Isolate_Name', 'Subtype', 'Clade', 'Passage_History',
+            'Location', 'Host', 'Collection_Date'
+        ]
+        df = (
+            df[cols]
+            .rename(columns={col : col.lower() for col in cols})
+        )
         dfs.append(df)
     
     # Concatenate all metadata dataframes
     metadata_df = pd.concat(dfs)
     
     # Make sure that all Isolate_Id values are unique
-    assert sum(metadata_df.duplicated(subset=['Isolate_Id'])) == 0, "Duplicate Isolate_Id values found in metadata."
+    assert sum(metadata_df.duplicated(subset=['isolate_id'])) == 0, "Duplicate isolate_id values found in metadata."
 
     # Make sure that all observed epi_isl_ids are in the metadata
-    metadata_epi_isl_ids = metadata_df['Isolate_Id'].unique()
-    for epi_isl in epi_isl_ids:
-        if epi_isl not in metadata_epi_isl_ids:
-            raise ValueError(f"EPI_ISL {epi_isl} not found in metadata.")
+    metadata_epi_isl_ids = set(metadata_df['isolate_id'].unique())
+    missing_ids = epi_isl_ids.difference(metadata_epi_isl_ids)
+    if missing_ids:
+        print(f"{len(missing_ids)} EPI_ISL IDs from sequences are not found in metadata")
+        print(f"First few missing IDs: {list(missing_ids)[:5]}")
+        return 1
     
     # Write metadata to CSV
     metadata_output_file = os.path.join(args.output_dir, f"{args.subtype}_metadata.csv")

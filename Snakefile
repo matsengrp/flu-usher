@@ -67,6 +67,7 @@ rule align_sequences:
         nextclade run {input.sequences} \
             --input-dataset {input.dataset_dir} \
             --include-reference \
+            --jobs {threads} \
             --output-fasta {output.alignment} \
             >& {log}
         """
@@ -143,11 +144,12 @@ rule optimize_tree:
         vcf="results/{subtype}/{segment}/curated_msa.vcf.gz"
     output:
         "results/{subtype}/{segment}/opt_tree.pb.gz"
+    threads: config["threads"]
     log:
         "logs/{subtype}/{segment}/optimize.log"
     shell:
         """
-        matOptimize -T 2 -m 0.00000001 -M 1 \
+        matOptimize -T {threads} -m 0.00000001 -M 1 \
             -i {input.tree} \
             -v {input.vcf} \
             -o {output} \
