@@ -159,12 +159,19 @@ rule optimize_tree:
 # Convert the optimized tree to Taxonium format for visualization
 rule convert_to_taxonium:
     input:
-        opt_tree="results/{subtype}/{segment}/opt_tree.pb.gz"
+        opt_tree="results/{subtype}/{segment}/opt_tree.pb.gz",
+        metadata="results/{subtype}/{subtype}_metadata.csv"
     output:
         "results/{subtype}/{segment}/opt_tree.jsonl.gz"
     log:
         "logs/{subtype}/{segment}/taxonium.log"
     shell:
         """
-        usher_to_taxonium --input {input.opt_tree} --output {output} &> {log}
+        usher_to_taxonium \
+            --input {input.opt_tree} \
+            --metadata {input.metadata} \
+            --key_column isolate_id \
+            --columns isolate_name,subtype,clade,passage_history,location,host,collection_date \
+            --output {output} \
+            &> {log}
         """

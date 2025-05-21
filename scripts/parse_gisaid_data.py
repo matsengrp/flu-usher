@@ -122,6 +122,8 @@ def main():
             df[cols]
             .rename(columns={col : col.lower() for col in cols})
         )
+        # Convert the 'collection_date' column to datetime
+        df['collection_date'] = pd.to_datetime(df['collection_date'], errors='coerce')
         dfs.append(df)
     
     # Concatenate all metadata dataframes
