@@ -74,7 +74,7 @@ rule align_sequences:
 
 # Curate the alignment to only include sites in the CDS of the reference, and sanitize IDs
 # so that they do not include special characters that lead to errors in UShER jobs. Also
-# output new FASTA and GFF files for the curated reference sequence.
+# output new FASTA, GFF, and GTF files for the curated reference sequence.
 rule curate_alignment:
     input:
         alignment="results/{subtype}/{segment}/msa.fasta.xz",
@@ -82,7 +82,8 @@ rule curate_alignment:
     output:
         curated_msa="results/{subtype}/{segment}/curated_msa.fasta.xz",
         curated_ref_fasta="results/{subtype}/{segment}/curated_reference.fasta",
-        curated_ref_gff="results/{subtype}/{segment}/curated_reference.gff"
+        curated_ref_gff="results/{subtype}/{segment}/curated_reference.gff",
+        curated_ref_gtf="results/{subtype}/{segment}/curated_reference.gtf"
     params:
         output_dir="results/{subtype}/{segment}",
         gene_name=lambda wildcards: wildcards.segment

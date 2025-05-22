@@ -75,12 +75,13 @@ def extract_gene_coordinates(gff_file, gene_name):
     # If we get here, no matching gene was found
     raise ValueError(f"Could not find gene '{gene_name}' in {gff_file}")
 
-def create_matching_gff(output_file, gene_name, original_start, original_end, phase, strand, attributes):
+def create_matching_gff_and_gtf(output_gff, output_gtf, gene_name, original_start, original_end, phase, strand, attributes):
     """
-    Create a simplified GFF file with adjusted coordinates
+    Create GFF and GTF files with adjusted coordinates
     
     Args:
-        output_file: Path to output GFF file
+        output_gff: Path to output GFF file
+        output_gtf: Path to output GTF file
         gene_name: Name of the gene
         original_start: Original start position (1-based)
         original_end: Original end position (1-based)
@@ -98,11 +99,20 @@ def create_matching_gff(output_file, gene_name, original_start, original_end, ph
     gff_content += f"##sequence-region Reference 1 {new_length}\n"
     gff_content += f"Reference\tCurated\tCDS\t1\t{new_length}\t.\t{strand}\t{phase}\tID={gene_name};Name={gene_name}\n"
     
-    # Write to file
-    with open(output_file, 'w') as f:
+    # Write GFF to file
+    with open(output_gff, 'w') as f:
         f.write(gff_content)
     
-    logger.info(f"Created simplified GFF file at {output_file}")
+    # Create GTF content (GTF uses spaces after semicolons and quotes around values)
+    gtf_content = f"Reference\tCurated\tCDS\t1\t{new_length}\t.\t{strand}\t{phase}\t"
+    gtf_content += f'gene_id "{gene_name}"; transcript_id "{gene_name}_transcript"; gene_name "{gene_name}";\n'
+    
+    # Write GTF to file
+    with open(output_gtf, 'w') as f:
+        f.write(gtf_content)
+    
+    logger.info(f"Created GFF file at {output_gff}")
+    logger.info(f"Created GTF file at {output_gtf}")
     logger.info(f"Adjusted coordinates: 1-{new_length} (original: {original_start}-{original_end})")
 
 def slice_record(record, gene_start, gene_end):
@@ -221,14 +231,24 @@ def main():
     output_curated_msa = os.path.join(args.output_dir, "curated_msa.fasta.xz")
     output_reference_fasta = os.path.join(args.output_dir, "curated_reference.fasta")
     output_reference_gff = os.path.join(args.output_dir, "curated_reference.gff")
+    output_reference_gtf = os.path.join(args.output_dir, "curated_reference.gtf")
     
-    # Extract gene coordinates from the GFF file and write a simplified GFF file
+    # Extract gene coordinates from the GFF file and write GFF and GTF files that match the curated reference
     try:
         gene_start, gene_end, phase, strand, attributes = extract_gene_coordinates(args.gff, args.gene_name)
         logger.info(f"Using gene coordinates from GFF: {gene_start}-{gene_end}")
         
-        # Create a GFF file reindexed to 1 for the gene of interest
-        create_matching_gff(output_reference_gff, args.gene_name, gene_start, gene_end, phase, strand, attributes)
+        # Create GFF and GTF files reindexed to 1 for the gene of interest
+        create_matching_gff_and_gtf(
+            output_reference_gff, 
+            output_reference_gtf, 
+            args.gene_name, 
+            gene_start, 
+            gene_end, 
+            phase, 
+            strand, 
+            attributes
+        )
             
     except Exception as e:
         logger.error(f"Failed to extract coordinates for gene '{args.gene_name}': {e}")
