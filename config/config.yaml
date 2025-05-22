@@ -1,12 +1,12 @@
 # Configuration for flu-usher pipeline
 
 # General settings
-threads: 10
+threads: 16
 
 # Types and segments to analyze
 subtypes:
-  - "H3N2"
-  # - "H7N9"
+  # - "H3N2"
+  - "H7N9"
 segments:
   - "HA"
   # - "NA"

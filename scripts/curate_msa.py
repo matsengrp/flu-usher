@@ -23,10 +23,9 @@ def parse_args():
     """Parse command line arguments"""
     parser = argparse.ArgumentParser(description='Curate MSA for flu-usher pipeline')
     parser.add_argument('--input', required=True, help='Input MSA file (xz compressed)')
-    parser.add_argument('--output', required=True, help='Output curated MSA file (xz compressed)')
+    parser.add_argument('--output-dir', required=True, help='Directory for output files')
     parser.add_argument('--gff', required=True, help='GFF file with gene annotation')
     parser.add_argument('--gene-name', required=True, help='Name of gene to extract from GFF')
-    parser.add_argument('--output-gff', help='Output a matching GFF file (optional)')
     parser.add_argument('--max_frac_gaps', type=float, default=0.05, 
                         help='Maximum fraction of gaps allowed in a sequence')
     parser.add_argument('--max_frac_ambig', type=float, default=0.01, 
@@ -215,15 +214,21 @@ def main():
     args = parse_args()
     logger = setup_logging()
     
+    # Create output directory if it doesn't exist
+    os.makedirs(args.output_dir, exist_ok=True)
+    
+    # Define output file paths within the output directory
+    output_curated_msa = os.path.join(args.output_dir, "curated_msa.fasta.xz")
+    output_reference_fasta = os.path.join(args.output_dir, "curated_reference.fasta")
+    output_reference_gff = os.path.join(args.output_dir, "curated_reference.gff")
+    
     # Extract gene coordinates from the GFF file and write a simplified GFF file
     try:
         gene_start, gene_end, phase, strand, attributes = extract_gene_coordinates(args.gff, args.gene_name)
         logger.info(f"Using gene coordinates from GFF: {gene_start}-{gene_end}")
         
-        # If output GFF file is specified, create a GFF file reindexed to 1
-        # for the gene of interest so that it matches the new MSA
-        if args.output_gff:
-            create_matching_gff(args.output_gff, args.gene_name, gene_start, gene_end, phase, strand, attributes)
+        # Create a GFF file reindexed to 1 for the gene of interest
+        create_matching_gff(output_reference_gff, args.gene_name, gene_start, gene_end, phase, strand, attributes)
             
     except Exception as e:
         logger.error(f"Failed to extract coordinates for gene '{args.gene_name}': {e}")
@@ -254,9 +259,18 @@ def main():
     )
     
     # Write the curated sequences to an output FASTA file
-    logger.info(f"Writing {len(curated_records)} curated sequences to {args.output}")
-    with lzma.open(args.output, 'wt') as handle:
+    logger.info(f"Writing {len(curated_records)} curated sequences to {output_curated_msa}")
+    with lzma.open(output_curated_msa, 'wt') as handle:
         SeqIO.write(curated_records, handle, 'fasta')
+    
+    # Write the first sequence to a separate uncompressed FASTA file as the reference
+    if curated_records:
+        logger.info(f"Writing reference sequence to {output_reference_fasta}")
+        with open(output_reference_fasta, 'w') as handle:
+            SeqIO.write([curated_records[0]], handle, 'fasta')
+    else:
+        logger.error("No sequences passed filtering, cannot write reference sequence")
+        return 1
     
     logger.info(f"Retained {len(curated_records)}/{len(records)} sequences ({len(curated_records)/len(records)*100:.1f}%)")
     return 0

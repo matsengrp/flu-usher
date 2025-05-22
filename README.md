@@ -4,9 +4,13 @@ A Snakemake pipeline for building phylogenetic trees of influenza virus sequence
 
 ## TODO
 
+* compute counts
+* filter out nonhuman sequences for H3N2?
 * run H3N2 HA
-* summary plots for alignments: number downloaded, length distribution, number retained
-* add metadata to taxonium tree
+* summary plots for alignments
+   * number downloaded, length distribution, number retained
+* summary plots for final sequences
+   * number of sequences per host
 * rerooting (genome with sequences for all segments)
 
 ## Directory Structure
