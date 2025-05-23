@@ -3,6 +3,8 @@ import os
 import json
 import argparse
 import sys
+import time
+import random
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Download reference sequences for flu-usher")
@@ -58,8 +60,14 @@ def main():
         os.makedirs(args.output_dir)
     
     # Download reference files
-    Entrez.email = 'test@gmail.com'
+    Entrez.email = 'test_window238476@gmail.com'
+
+    # Wait for a random amount of time between 0 and 2 minutes before downloading
+    wait_time = random.uniform(0, 120)  # 0 to 120 seconds (2 minutes)
+    print(f"Waiting {wait_time:.1f} seconds before downloading to avoid overwhelming NCBI servers...")
+    time.sleep(wait_time)
     fasta_file = download_gene_sequence(args.accession, args.output_dir)
+    time.sleep(20)  # Wait for 20 seconds before downloading GFF
     gff_file = download_gene_gff(args.accession, args.output_dir)
     
     # Create pathogen.json for Nextclade
