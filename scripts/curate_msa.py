@@ -25,30 +25,31 @@ def parse_args():
     parser.add_argument('--input', required=True, help='Input MSA file (xz compressed)')
     parser.add_argument('--output-dir', required=True, help='Directory for output files')
     parser.add_argument('--gff', required=True, help='GFF file with gene annotation')
-    parser.add_argument('--gene-name', required=True, help='Name of gene to extract from GFF')
     parser.add_argument('--max_frac_gaps', type=float, default=0.05, 
                         help='Maximum fraction of gaps allowed in a sequence')
     parser.add_argument('--max_frac_ambig', type=float, default=0.01, 
                         help='Maximum fraction of ambiguous nucleotides allowed')
     return parser.parse_args()
 
-def extract_gene_coordinates(gff_file, gene_name):
+def extract_all_genes_and_cds(gff_file):
     """
-    Extract gene start and end positions from a GFF file
+    Extract information for all genes and CDS features from a GFF file
     
     Args:
         gff_file: Path to GFF file
-        gene_name: Name of the gene to extract
     
     Returns:
-        tuple: (start, end) coordinates (1-based), phase, strand, attributes
+        list: List of dictionaries containing gene/CDS information
+        tuple: (min_start, max_end) coordinates for all features
     """
     logger = logging.getLogger(__name__)
     
     # Regular expressions for parsing GFF
     re_gff = re.compile(r'([^\t]+)\t([^\t]+)\t([^\t]+)\t(\d+)\t(\d+)\t([^\t]+)\t([^\t]+)\t([^\t]+)\t([^\t]*)')
     
-    logger.info(f"Extracting coordinates for gene '{gene_name}' from {gff_file}")
+    logger.info(f"Extracting all genes and CDS features from {gff_file}")
+    
+    features = []
     
     with open(gff_file, 'r') as f:
         for line in f:
@@ -65,71 +66,133 @@ def extract_gene_coordinates(gff_file, gene_name):
             # Convert to integers
             start, end = int(start), int(end)
             
+            # Strip newline character from attributes
+            attributes = attributes.strip()
+            
             # Look for gene or CDS features
             if feature_type.lower() in ('gene', 'cds'):
-                # Check if gene name matches in the attributes
-                if f"ID={gene_name}" in attributes or f"Name={gene_name}" in attributes or f"gene={gene_name}" in attributes:
-                    logger.info(f"Found gene '{gene_name}' at position {start}-{end}")
-                    return start, end, phase, strand, attributes
+                # Extract ID and Name from attributes
+                feature_id = extract_attribute_value(attributes, 'ID')
+                feature_name = extract_attribute_value(attributes, 'Name')
+                
+                # Use ID as fallback for name if Name is not present
+                if not feature_name:
+                    feature_name = feature_id
+                
+                # Use feature_type as fallback if neither ID nor Name is present
+                if not feature_name:
+                    feature_name = f"{feature_type}_feature"
+                
+                feature_info = {
+                    'id': feature_id,
+                    'name': feature_name,
+                    'type': feature_type,
+                    'start': start,
+                    'end': end,
+                    'strand': strand,
+                    'phase': phase,
+                    'attributes': attributes,
+                    'original_attributes': attributes  # Keep original for reference
+                }
+                features.append(feature_info)
+                logger.info(f"Found {feature_type} ID='{feature_id}' Name='{feature_name}' at position {start}-{end}")
     
-    # If we get here, no matching gene was found
-    raise ValueError(f"Could not find gene '{gene_name}' in {gff_file}")
+    if not features:
+        raise ValueError(f"Could not find any genes or CDS features in {gff_file}")
+    
+    # Calculate overall min and max coordinates
+    min_start = min(f['start'] for f in features)
+    max_end = max(f['end'] for f in features)
+    
+    logger.info(f"Found {len(features)} features spanning {min_start}-{max_end}")
+    return features, (min_start, max_end)
 
-def create_matching_gff_and_gtf(output_gff, output_gtf, gene_name, original_start, original_end, phase, strand, attributes):
+def extract_attribute_value(attributes, attr_name):
     """
-    Create GFF and GTF files with adjusted coordinates
+    Extract a specific attribute value from GFF attributes string
+    
+    Args:
+        attributes: GFF attributes string
+        attr_name: Name of the attribute to extract (e.g., 'ID', 'Name')
+    
+    Returns:
+        str: Attribute value or None if not found
+    """
+    attr_pattern = f"{attr_name}="
+    if attr_pattern in attributes:
+        start_idx = attributes.find(attr_pattern) + len(attr_pattern)
+        end_idx = attributes.find(';', start_idx)
+        if end_idx == -1:
+            end_idx = len(attributes)
+        return attributes[start_idx:end_idx]
+    return None
+
+def create_matching_gff_and_gtf(output_gff, output_gtf, features, min_start):
+    """
+    Create GFF and GTF files with adjusted coordinates for all features
     
     Args:
         output_gff: Path to output GFF file
         output_gtf: Path to output GTF file
-        gene_name: Name of the gene
-        original_start: Original start position (1-based)
-        original_end: Original end position (1-based)
-        phase: Original phase
-        strand: Original strand
-        attributes: Original attributes
+        features: List of feature dictionaries
+        min_start: Minimum start coordinate (will be adjusted to 1)
     """
     logger = logging.getLogger(__name__)
     
-    # Calculate new coordinates (start at 1)
-    new_length = original_end - original_start + 1
+    # Calculate the total length of the region
+    max_end_adjusted = max(f['end'] - min_start + 1 for f in features)
     
     # Create GFF content
-    gff_content = "##gff-version 3\n"
-    gff_content += f"##sequence-region Reference 1 {new_length}\n"
-    gff_content += f"Reference\tCurated\tCDS\t1\t{new_length}\t.\t{strand}\t{phase}\tID={gene_name};Name={gene_name}\n"
+    gff_lines = ["##gff-version 3\n"]
+    gff_lines.append(f"##sequence-region Reference 1 {max_end_adjusted}\n")
     
-    # Write GFF to file
+    # Create GTF lines
+    gtf_lines = []
+    
+    for i, feature in enumerate(features):
+        # Adjust coordinates (min_start becomes 1)
+        adj_start = feature['start'] - min_start + 1
+        adj_end = feature['end'] - min_start + 1
+        
+        # GFF line - keep all original attributes, just change coordinates
+        gff_line = f"Reference\tCurated\t{feature['type']}\t{adj_start}\t{adj_end}\t.\t{feature['strand']}\t{feature['phase']}\t{feature['attributes']}\n"
+        gff_lines.append(gff_line)
+        
+        # GTF line - use original ID and Name for GTF attributes
+        gtf_gene_id = feature['id'] if feature['id'] else feature['name']
+        gtf_gene_name = feature['name'] if feature['name'] else feature['id']
+        
+        gtf_line = f"Reference\tCurated\t{feature['type']}\t{adj_start}\t{adj_end}\t.\t{feature['strand']}\t{feature['phase']}\t"
+        gtf_line += f'gene_id "{gtf_gene_id}"; transcript_id "{gtf_gene_id}_transcript"; gene_name "{gtf_gene_name}";\n'
+        gtf_lines.append(gtf_line)
+    
+    # Write GFF file
     with open(output_gff, 'w') as f:
-        f.write(gff_content)
+        f.writelines(gff_lines)
     
-    # Create GTF content (GTF uses spaces after semicolons and quotes around values)
-    gtf_content = f"Reference\tCurated\tCDS\t1\t{new_length}\t.\t{strand}\t{phase}\t"
-    gtf_content += f'gene_id "{gene_name}"; transcript_id "{gene_name}_transcript"; gene_name "{gene_name}";\n'
-    
-    # Write GTF to file
+    # Write GTF file
     with open(output_gtf, 'w') as f:
-        f.write(gtf_content)
+        f.writelines(gtf_lines)
     
-    logger.info(f"Created GFF file at {output_gff}")
-    logger.info(f"Created GTF file at {output_gtf}")
-    logger.info(f"Adjusted coordinates: 1-{new_length} (original: {original_start}-{original_end})")
+    logger.info(f"Created GFF file at {output_gff} with {len(features)} features")
+    logger.info(f"Created GTF file at {output_gtf} with {len(features)} features")
+    logger.info(f"Adjusted coordinates: region spans 1-{max_end_adjusted} (original: {min_start}-{max(f['end'] for f in features)})")
 
-def slice_record(record, gene_start, gene_end):
+def slice_record(record, min_start, max_end):
     """
     Slice a sequence record to include only the region of interest
     and sanitize the sequence ID by replacing problematic characters
     
     Args:
         record: BioPython SeqRecord object
-        gene_start: Start position of the gene (1-based)
-        gene_end: End position of the gene (1-based)
+        min_start: Start position of the region (1-based)
+        max_end: End position of the region (1-based)
     
     Returns:
         New SeqRecord with the sliced sequence and sanitized ID
     """
     # Slice the sequence (adjust to 0-based indexing)
-    sliced_seq = record.seq[gene_start-1:gene_end]
+    sliced_seq = record.seq[min_start-1:max_end]
     
     # Sanitize the sequence ID by replacing problematic characters with underscores
     sanitized_id = record.id
@@ -233,25 +296,21 @@ def main():
     output_reference_gff = os.path.join(args.output_dir, "curated_reference.gff")
     output_reference_gtf = os.path.join(args.output_dir, "curated_reference.gtf")
     
-    # Extract gene coordinates from the GFF file and write GFF and GTF files that match the curated reference
+    # Extract all gene/CDS coordinates from the GFF file
     try:
-        gene_start, gene_end, phase, strand, attributes = extract_gene_coordinates(args.gff, args.gene_name)
-        logger.info(f"Using gene coordinates from GFF: {gene_start}-{gene_end}")
+        features, (min_start, max_end) = extract_all_genes_and_cds(args.gff)
+        logger.info(f"Using coordinate range: {min_start}-{max_end}")
         
-        # Create GFF and GTF files reindexed to 1 for the gene of interest
+        # Create GFF and GTF files with all features, reindexed to start at 1
         create_matching_gff_and_gtf(
             output_reference_gff, 
             output_reference_gtf, 
-            args.gene_name, 
-            gene_start, 
-            gene_end, 
-            phase, 
-            strand, 
-            attributes
+            features,
+            min_start
         )
             
     except Exception as e:
-        logger.error(f"Failed to extract coordinates for gene '{args.gene_name}': {e}")
+        logger.error(f"Failed to extract coordinates from GFF: {e}")
         return 1
         
     # Read in the MSA
@@ -261,9 +320,9 @@ def main():
     
     logger.info(f"Read {len(records)} sequences")
     
-    # Slice the sequences to the CDS of interest and santitize the IDs
-    logger.info(f"Slicing sequences to region {gene_start}-{gene_end}")
-    sliced_records = [slice_record(record, gene_start, gene_end) for record in records]
+    # Slice the sequences to the region spanning all genes/CDS and sanitize the IDs
+    logger.info(f"Slicing sequences to region {min_start}-{max_end}")
+    sliced_records = [slice_record(record, min_start, max_end) for record in records]
     
     # Filter sequences with too many gaps or ambiguous characters
     ambiguous_characters = get_ambiguous_chars(sliced_records)

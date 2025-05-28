@@ -85,8 +85,7 @@ rule curate_alignment:
         curated_ref_gff="results/{subtype}/{segment}/curated_reference.gff",
         curated_ref_gtf="results/{subtype}/{segment}/curated_reference.gtf"
     params:
-        output_dir="results/{subtype}/{segment}",
-        gene_name=lambda wildcards: wildcards.segment
+        output_dir="results/{subtype}/{segment}"
     log:
         "logs/{subtype}/{segment}/curate.log"
     shell:
@@ -95,7 +94,6 @@ rule curate_alignment:
             --input {input.alignment} \
             --output-dir {params.output_dir} \
             --gff {input.gff} \
-            --gene-name {params.gene_name} \
             --max_frac_gaps {config[max_frac_gaps]} \
             --max_frac_ambig {config[max_frac_ambig]} \
             &> {log}
