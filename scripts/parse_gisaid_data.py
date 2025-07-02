@@ -23,7 +23,14 @@ def parse_args():
     return parser.parse_args()
 
 def extract_ha_na_subtype(subtype_str):
-    """Extract HA and NA subtypes from a full subtype string like H1N1"""
+    """Extract HA and NA subtypes from a full subtype string like H1N1 or A_/_H1N1"""
+    # First, try to extract the H*N* part from patterns like A_/_H1N1
+    if '_/_' in subtype_str:
+        # Split by '_/_' and take the part after it
+        parts = subtype_str.split('_/_')
+        if len(parts) >= 2:
+            subtype_str = parts[1]
+    
     # Match patterns like H1N1, H3N2, etc.
     match = re.match(r'(H\d+)(N\d+)', subtype_str)
     if match:
