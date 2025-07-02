@@ -2,3 +2,5 @@ data/
 results*/
 logs/
 .snakemake/
+sbatch*
+run.sbatch
