@@ -4,14 +4,45 @@ A Snakemake pipeline for building phylogenetic trees of influenza virus sequence
 
 ## TODO
 
-* compute counts
+* start downloading additional H1N1 data
+* workflow:
+   * build single tree with sequences from all hosts
+   * generate counts from big tree
+   * also generate counts from tree subset to sequences from a given host or subtype or whatever
+* For HA and NA, build one tree for each subtype regardless of the subtype of other segments
+   * H1, H3, H5, H7, H9
+   * N1, N2, N9
+* For other genes, build one tree with all genes across all subtypes
+   * PB2
+   * PB1
+   * etc.
+* Could specify which subtypes to combine for each segment, like:
+   * N1: H1N1, H5N1
+   * PB2: H1N1, N3N2, etc.
+   * could use H3N2 reference when combining across all subtypes
+* Get a handle on the overall topologies of the trees
+
+* summary plots
+   * summary plots for alignments
+      * number downloaded, length distribution, number retained, frac gaps at each site
+   * summary plots for final sequences
+      * number of sequences per host
+      * number of sequences sampled over time
+   * summary of trees
+      * number of mutations per branch
+
+* using workaround for H1N1 HA
+
+* how identify mutations in test set that go against DASM expectations?
+* how identify mutations that go against DMS expectations? Fit selection factor * DMS? How assess significance?
+* add tests?
 * filter out nonhuman sequences for H3N2?
-* run H3N2 HA
-* summary plots for alignments
-   * number downloaded, length distribution, number retained
-* summary plots for final sequences
-   * number of sequences per host
+* allow more mutations per branch? For SARS2 was for whole genome; for flu is only for part; so already more than before
+
+* H5N1 NS: why did the alignment step filter out so many sequences?
+
 * rerooting (genome with sequences for all segments)
+* add code for computing counts to pipeline
 
 ## Directory Structure
 
