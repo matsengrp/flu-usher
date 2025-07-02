@@ -1,5 +1,6 @@
 """
-Script to parse GISAID data files and organize sequences by segment
+Script to parse GISAID data files from multiple directories and organize sequences by segment.
+For HA and NA segments, further split by subtype (e.g., H1, N1).
 """
 
 import argparse
@@ -11,140 +12,165 @@ import pandas as pd
 from Bio import SeqIO
 from Bio.SeqRecord import SeqRecord
 from collections import defaultdict
+import re
 
 def parse_args():
     """Parse command line arguments"""
-    parser = argparse.ArgumentParser(description='Parse GISAID data files')
-    parser.add_argument('--subtype', required=True, help='Flu subtype (e.g., H7N9)')
+    parser = argparse.ArgumentParser(description='Parse GISAID data files from multiple directories')
+    parser.add_argument('--input-dirs', nargs='+', required=True, help='Input directories containing GISAID data')
     parser.add_argument('--output-dir', required=True, help='Output directory for results')
     parser.add_argument('--segments', nargs='+', help='List of segments to process (e.g., HA NA)')
     return parser.parse_args()
+
+def extract_ha_na_subtype(subtype_str):
+    """Extract HA and NA subtypes from a full subtype string like H1N1"""
+    # Match patterns like H1N1, H3N2, etc.
+    match = re.match(r'(H\d+)(N\d+)', subtype_str)
+    if match:
+        return match.group(1), match.group(2)
+    return None, None
 
 def main():
     # Parse command line arguments
     args = parse_args()
     
-    print(f"Processing data for {args.subtype}")
+    print(f"Processing data from {len(args.input_dirs)} input directories")
     
     # Create output directory if it doesn't exist
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir)
     
-    # Read in sequence data and metadata
-    data_dir = os.path.join('data', args.subtype)
-    fasta_files = glob.glob(os.path.join(data_dir, "*.fasta"))
-    metadata_files = glob.glob(os.path.join(data_dir, "*.xls"))
-    
-    # Verify that we have at least one fasta and one metadata file
-    if len(fasta_files) == 0 or len(metadata_files) == 0:
-        print(f"Error: Expected at least one FASTA file and one XLS file in {data_dir}")
-        print(f"Found {len(fasta_files)} FASTA files and {len(metadata_files)} XLS files")
-        return 1
-    
-    # Iterate over sequences, group by segment, and make one FASTA file per
-    # segment with all sequences for that segment
-    segment_records = defaultdict(list)
-    epi_isl_ids = set()
-    
-    # Track which EPI_ISL IDs have been seen for each segment
-    segment_epi_isl_ids = defaultdict(set)
-    
     # List of segments to keep (from config file or all segments if not specified)
     valid_segments = set(args.segments) if args.segments else None
     
-    for fasta_file in fasta_files:
-        # Read in records
-        records = list(SeqIO.parse(fasta_file, "fasta"))
-        print(f"Read {len(records)} records from {fasta_file}")
-        
-        # Iterate through records and parse metadata from the sequence ID
-        for record in records:
-            # Parse the sequence ID
-            try:
-                (epi, segment, name, epi_isl, seq_subtype) = record.id.split('|')
-                
-                # Update set of EPI_ISL IDs
-                epi_isl_ids.add(epi_isl)
-
-                # Skip segments not in the config file
-                if valid_segments and segment not in valid_segments:
-                    continue
-                
-                # Skip record if we've already seen this EPI_ISL ID for this segment
-                if epi_isl in segment_epi_isl_ids[segment]:
-                    print(f"Warning: Duplicate EPI_ISL ID {epi_isl} found for segment {segment}. Skipping record.")
-                    continue
-                segment_epi_isl_ids[segment].add(epi_isl)
-                
-                # Check that the subtype matches what we expect
-                if not seq_subtype.endswith(args.subtype):
-                    print(f"Warning: Record {record.id} has mismatched subtype: {seq_subtype} vs expected {args.subtype}")
-                    continue
-                
-                # Update record ID and description to just use the EPI_ISL
-                record.id = epi_isl
-                record.description = epi_isl
-                
-                # Store record by segment
-                segment_records[segment].append(record)
-                
-            except ValueError:
-                print(f"Warning: Could not parse ID for record: {record.id}")
-                continue
+    # Iterate over sequences, group by segment (and subtype for HA/NA)
+    # For HA/NA: segment_records[segment][subtype] = [records]
+    # For others: segment_records[segment]['all'] = [records]
+    segment_records = defaultdict(lambda: defaultdict(list))
     
-    # For each segment, print summary and then write the records to a compressed XZ FASTA file
-    print(f"\nTotal unique EPI_ISL IDs: {len(epi_isl_ids)}")
-    print("\nSummary of records by segment:")
-    for segment, records in segment_records.items():
-        assert len(records) == len(segment_epi_isl_ids[segment]), "Mismatch between number of records and EPI_ISL IDs"
-        segment_output_dir = os.path.join(args.output_dir, segment)
-        if not os.path.isdir(segment_output_dir):
-            os.makedirs(segment_output_dir)
-        output_file = os.path.join(segment_output_dir, "raw_sequences.fasta.xz")
-        with lzma.open(output_file, 'wt') as handle:
-            SeqIO.write(records, handle, "fasta")
-        print(f"Segment {segment}: {len(records)} records written to {output_file}") 
+    # Track which EPI_ISL IDs have been seen for each segment-subtype combination
+    segment_subtype_epi_isl_ids = defaultdict(lambda: defaultdict(set))
     
-    # Load all metadata and write to an output CSV file
-    dfs = []
-    for metadata_file in metadata_files:
+    # Collect all metadata dataframes
+    all_metadata_dfs = []
+    
+    # Process each input directory
+    for data_dir in args.input_dirs:
+        if not os.path.exists(data_dir):
+            print(f"Warning: Directory {data_dir} does not exist, skipping")
+            continue
+            
+        print(f"\nProcessing directory: {data_dir}")
         
-        # Read in data from the first sheet
-        df = pd.read_excel(metadata_file, sheet_name=0)
-        print(f"Read {len(df)} records from {metadata_file}")
+        fasta_files = glob.glob(os.path.join(data_dir, "*.fasta"))
+        metadata_files = glob.glob(os.path.join(data_dir, "*.xls"))
         
-        # Subset to a few columns of interest
-        cols = [
-            'Isolate_Id', 'Isolate_Name', 'Subtype', 'Clade', 'Passage_History',
-            'Location', 'Host', 'Collection_Date'
-        ]
-        df = (
-            df[cols]
-            .rename(columns={col : col.lower() for col in cols})
-        )
-        # Convert the 'collection_date' column to datetime
-        df['collection_date'] = pd.to_datetime(df['collection_date'], errors='coerce')
-        dfs.append(df)
+        if len(fasta_files) == 0 or len(metadata_files) == 0:
+            print(f"Warning: Expected at least one FASTA file and one XLS file in {data_dir}")
+            print(f"Found {len(fasta_files)} FASTA files and {len(metadata_files)} XLS files")
+            continue
+        
+        # Process FASTA files
+        for fasta_file in fasta_files:
+            records = list(SeqIO.parse(fasta_file, "fasta"))
+            print(f"  Read {len(records)} records from {fasta_file}")
+            
+            for record in records:
+                try:
+                    # Parse the sequence ID
+                    (epi, segment, name, epi_isl, seq_subtype) = record.id.split('|')
+                    
+                    # Skip segments not in the config file
+                    if valid_segments and segment not in valid_segments:
+                        continue
+                    
+                    # Determine the grouping key based on segment type
+                    if segment == 'HA':
+                        # Extract H subtype (e.g., H1 from H1N1)
+                        ha_subtype, _ = extract_ha_na_subtype(seq_subtype)
+                        if ha_subtype:
+                            group_key = ha_subtype
+                        else:
+                            print(f"Warning: Could not extract HA subtype from {seq_subtype}")
+                            continue
+                    elif segment == 'NA':
+                        # Extract N subtype (e.g., N1 from H1N1)
+                        _, na_subtype = extract_ha_na_subtype(seq_subtype)
+                        if na_subtype:
+                            group_key = na_subtype
+                        else:
+                            print(f"Warning: Could not extract NA subtype from {seq_subtype}")
+                            continue
+                    else:
+                        # For non-HA/NA segments, group all together
+                        group_key = 'all'
+                    
+                    # Skip record if we've already seen this EPI_ISL ID for this segment-group combination
+                    if epi_isl in segment_subtype_epi_isl_ids[segment][group_key]:
+                        print(f"Warning: Duplicate EPI_ISL ID {epi_isl} found for segment {segment} group {group_key}. Skipping.")
+                        continue
+                    
+                    segment_subtype_epi_isl_ids[segment][group_key].add(epi_isl)
+                    
+                    # Update record ID and description to just use the EPI_ISL
+                    record.id = epi_isl
+                    record.description = epi_isl
+                    
+                    # Store record by segment and group
+                    segment_records[segment][group_key].append(record)
+                    
+                except ValueError:
+                    print(f"Warning: Could not parse ID for record: {record.id}")
+                    continue
+        
+        # Process metadata files
+        for metadata_file in metadata_files:
+            df = pd.read_excel(metadata_file, sheet_name=0)
+            print(f"  Read {len(df)} metadata records from {metadata_file}")
+            
+            # Subset to columns of interest
+            cols = [
+                'Isolate_Id', 'Isolate_Name', 'Subtype', 'Clade', 'Passage_History',
+                'Location', 'Host', 'Collection_Date'
+            ]
+            df = (
+                df[cols]
+                .rename(columns={col : col.lower() for col in cols})
+            )
+            # Convert the 'collection_date' column to datetime
+            df['collection_date'] = pd.to_datetime(df['collection_date'], errors='coerce')
+            all_metadata_dfs.append(df)
     
     # Concatenate all metadata dataframes
-    metadata_df = pd.concat(dfs)
+    if all_metadata_dfs:
+        metadata_df = pd.concat(all_metadata_dfs, ignore_index=True)
+        
+        # Remove duplicate isolate_ids (keep first occurrence)
+        if metadata_df.duplicated(subset=['isolate_id']).sum() > 0:
+            print(f"Warning: Found {metadata_df.duplicated(subset=['isolate_id']).sum()} duplicate isolate_ids in metadata, keeping first occurrence")
+            metadata_df = metadata_df.drop_duplicates(subset=['isolate_id'], keep='first')
+        
+        # Write combined metadata to CSV
+        metadata_output_file = os.path.join(args.output_dir, "combined_metadata.csv")
+        print(f"\nWriting combined metadata to {metadata_output_file}")
+        metadata_df.to_csv(metadata_output_file, index=False)
+    else:
+        print("Warning: No metadata files were processed")
     
-    # Make sure that all Isolate_Id values are unique
-    assert sum(metadata_df.duplicated(subset=['isolate_id'])) == 0, "Duplicate isolate_id values found in metadata."
-
-    # Make sure that all observed epi_isl_ids are in the metadata
-    metadata_epi_isl_ids = set(metadata_df['isolate_id'].unique())
-    missing_ids = epi_isl_ids.difference(metadata_epi_isl_ids)
-    if missing_ids:
-        print(f"{len(missing_ids)} EPI_ISL IDs from sequences are not found in metadata")
-        print(f"First few missing IDs: {list(missing_ids)[:5]}")
-        return 1
-    
-    # Write metadata to CSV
-    metadata_output_file = os.path.join(args.output_dir, f"{args.subtype}_metadata.csv")
-    print(f"\nWriting metadata to {metadata_output_file}")
-    metadata_df.to_csv(metadata_output_file, index=False)
+    # Write sequences to output files organized by segment and subtype
+    print("\nSummary of records by segment and subtype:")
+    for segment, groups in segment_records.items():
+        for group_key, records in groups.items():
+            # Create output directory path as segment/group
+            segment_output_dir = os.path.join(args.output_dir, segment, group_key)
+            if not os.path.isdir(segment_output_dir):
+                os.makedirs(segment_output_dir)
+            
+            output_file = os.path.join(segment_output_dir, "raw_sequences.fasta.xz")
+            with lzma.open(output_file, 'wt') as handle:
+                SeqIO.write(records, handle, "fasta")
+            
+            print(f"  {segment}/{group_key}: {len(records)} records written to {output_file}")
 
 if __name__ == "__main__":
     sys.exit(main())
-

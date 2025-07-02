@@ -3,13 +3,15 @@
 # General settings
 threads: 12
 
-# Types and segments to analyze
-subtypes:
-  - "H1N1"
-  - "H3N2"
-  - "H5N1"
-  - "H7N9"
-  - "H9N2"
+# Input directories containing GISAID data
+input_dirs:
+  - "data/H1N1"
+  - "data/H3N2"
+  - "data/H5N1"
+  - "data/H7N9"
+  - "data/H9N2"
+
+# Segments to analyze
 segments:
   - "PB2"
   - "PB1"
@@ -20,62 +22,42 @@ segments:
   - "MP"
   - "NS"
 
-# Reference accession numbers for each type-segment combination
+# Expected HA and NA subtypes
+ha_subtypes:
+  - "H1"
+  - "H3"
+  - "H5"
+  - "H7"
+  - "H9"
+
+na_subtypes:
+  - "N1"
+  - "N2"
+  - "N9"
+
+# Reference accession numbers for each segment-subtype combination
 references:
-  "H1N1_PB2" : "NC_026438.1"
-  "H1N1_PB1" : "NC_026435.1"
-  "H1N1_PA" : "NC_026437.1"
-  "H1N1_HA": "NC_026433.1"
-  "H1N1_NP" : "NC_026436.1"
-  "H1N1_NA" : "NC_026434.1"
-  "H1N1_MP" : "NC_026431.1"
-  "H1N1_NS" : "NC_026432.1"
-
-  "H3N2_PB2" : "NC_007373.1"
-  "H3N2_PB1" : "NC_007372.1"
-  "H3N2_PA" : "NC_007371.1"
-  "H3N2_HA": "NC_007366.1"
-  "H3N2_NP" : "NC_007369.1"
-  "H3N2_NA" : "NC_007368.1"
-  "H3N2_MP" : "NC_007367.1"
-  "H3N2_NS" : "NC_007370.1"
-
-  "H5N1_PB2" : "NC_007357.1"
-  "H5N1_PB1" : "NC_007358.1"
-  "H5N1_PA" : "NC_007359.1"
-  "H5N1_HA" : "NC_007362.1"
-  "H5N1_NP" : "NC_007360.1"
-  "H5N1_NA" : "NC_007361.1"
-  "H5N1_MP" : "NC_007363.1"
-  "H5N1_NS" : "NC_007364.1"
-
-  "H7N9_PB2" : "NC_026422.1"
-  "H7N9_PB1" : "NC_026423.1"
-  "H7N9_PA" : "NC_026424.1"
-  "H7N9_HA" : "NC_026425.1"
-  "H7N9_NP" : "NC_026426.1"
-  "H7N9_NA" : "NC_026429.1"
-  "H7N9_MP" : "NC_026427.1"
-  "H7N9_NS" : "NC_026428.1"
-
-  "H9N2_PB2" : "NC_004910.1"
-  "H9N2_PB1" : "NC_004911.1"
-  "H9N2_PA" : "NC_004912.1"
-  "H9N2_HA": "NC_004908.1"
-  "H9N2_NP" : "NC_004905.2"
-  "H9N2_NA" : "NC_004909.1"
-  "H9N2_MP" : "NC_004907.1"
-  "H9N2_NS" : "NC_004906.1"
+  # HA references by subtype
+  "HA_H1": "NC_026433.1"
+  "HA_H3": "NC_007366.1"
+  "HA_H5": "NC_007362.1"
+  "HA_H7": "NC_026425.1"
+  "HA_H9": "NC_004908.1"
+  
+  # NA references by subtype
+  "NA_N1": "NC_026434.1"
+  "NA_N2": "NC_007368.1"
+  "NA_N9": "NC_026429.1"
+  
+  # Other segments (using H1N1 as reference for all)
+  "PB2_all": "NC_026438.1"
+  "PB1_all": "NC_026435.1"
+  "PA_all": "NC_026437.1"
+  "NP_all": "NC_026436.1"
+  "MP_all": "NC_026431.1"
+  "NS_all": "NC_026432.1"
 
 # Parameters for sequence curation
 max_frac_gaps: 0.05
 max_frac_ambig: 0.01
-
-reference_subtype: "H1N1"
-
-# Define which genes are expected for each segment (optional - script will auto-detect)
-genes_by_segment:
-  HA: ["HA"]
-  NA: ["NA"] 
-  MP: ["M1", "M2"]
 

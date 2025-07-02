@@ -2,29 +2,45 @@
 import glob
 configfile: "config/config.yaml"
 
-# Define the final outputs that should be created for each subtype-segment combination
+# Define the final outputs that should be created for each segment-subtype combination
 rule all:
     input:
-        expand("results/{subtype}/{segment}/opt_tree.pb.gz", 
-               subtype=config["subtypes"], 
-               segment=config["segments"]),
-        expand("results/{subtype}/{segment}/opt_tree.jsonl.gz", 
-               subtype=config["subtypes"], 
-               segment=config["segments"])
+        # Trees for HA segments by subtype
+        expand("results/HA/{subtype}/opt_tree.pb.gz", 
+               subtype=config["ha_subtypes"]),
+        expand("results/HA/{subtype}/opt_tree.jsonl.gz", 
+               subtype=config["ha_subtypes"]),
+        # Trees for NA segments by subtype
+        expand("results/NA/{subtype}/opt_tree.pb.gz", 
+               subtype=config["na_subtypes"]),
+        expand("results/NA/{subtype}/opt_tree.jsonl.gz", 
+               subtype=config["na_subtypes"]),
+        # Trees for other segments (all subtypes combined)
+        expand("results/{segment}/all/opt_tree.pb.gz",
+               segment=[s for s in config["segments"] if s not in ["HA", "NA"]]),
+        expand("results/{segment}/all/opt_tree.jsonl.gz",
+               segment=[s for s in config["segments"] if s not in ["HA", "NA"]])
 
-# Parse GISAID data files by segment
+# Parse GISAID data files from all input directories at once
 rule parse_gisaid_data:
     output:
-        metadata="results/{subtype}/{subtype}_metadata.csv",
-        fastas=expand("results/{{subtype}}/{segment}/raw_sequences.fasta.xz", 
-                      segment=config["segments"])
+        metadata="results/combined_metadata.csv",
+        # Generate output files for each segment-subtype combination
+        fastas=expand("results/HA/{subtype}/raw_sequences.fasta.xz",
+                     subtype=config["ha_subtypes"]) + \
+               expand("results/NA/{subtype}/raw_sequences.fasta.xz", 
+                     subtype=config["na_subtypes"]) + \
+               expand("results/{segment}/all/raw_sequences.fasta.xz",
+                     segment=[s for s in config["segments"] if s not in ["HA", "NA"]])
+    params:
+        input_dirs=config["input_dirs"]
     log:
-        "logs/{subtype}/parse_gisaid_data.log"
+        "logs/parse_gisaid_data.log"
     shell:
         """
         python scripts/parse_gisaid_data.py \
-            --subtype {wildcards.subtype} \
-            --output-dir results/{wildcards.subtype} \
+            --input-dirs {params.input_dirs} \
+            --output-dir results \
             --segments {config[segments]} \
             &> {log}
         """
@@ -33,14 +49,14 @@ rule parse_gisaid_data:
 # and save these files in the same directory as input to Nextclade
 rule download_reference:
     output:
-        directory("results/{subtype}/{segment}/reference/"),
-        gff="results/{subtype}/{segment}/reference/reference.gff",
-        fasta="results/{subtype}/{segment}/reference/reference.fasta",
-        json="results/{subtype}/{segment}/reference/pathogen.json"
+        directory("results/{segment}/{subtype}/reference/"),
+        gff="results/{segment}/{subtype}/reference/reference.gff",
+        fasta="results/{segment}/{subtype}/reference/reference.fasta",
+        json="results/{segment}/{subtype}/reference/pathogen.json"
     params:
-        accession=lambda wildcards: config["references"][f"{wildcards.subtype}_{wildcards.segment}"]
+        accession=lambda wildcards: config["references"][f"{wildcards.segment}_{wildcards.subtype}"]
     log:
-        "logs/{subtype}/{segment}/download_reference.log"
+        "logs/{segment}/{subtype}/download_reference.log"
     shell:
         """
         python scripts/download_ref_seq.py \
@@ -52,16 +68,16 @@ rule download_reference:
 # Use Nextclade to align sequences to the reference
 rule align_sequences:
     input:
-        sequences="results/{subtype}/{segment}/raw_sequences.fasta.xz",
-        dataset_dir="results/{subtype}/{segment}/reference/",
-        reference_gff="results/{subtype}/{segment}/reference/reference.gff",
-        reference_fasta="results/{subtype}/{segment}/reference/reference.fasta",
-        reference_json="results/{subtype}/{segment}/reference/pathogen.json"
+        sequences="results/{segment}/{subtype}/raw_sequences.fasta.xz",
+        dataset_dir="results/{segment}/{subtype}/reference/",
+        reference_gff="results/{segment}/{subtype}/reference/reference.gff",
+        reference_fasta="results/{segment}/{subtype}/reference/reference.fasta",
+        reference_json="results/{segment}/{subtype}/reference/pathogen.json"
     output:
-        alignment="results/{subtype}/{segment}/msa.fasta.xz"
+        alignment="results/{segment}/{subtype}/msa.fasta.xz"
     threads: config["threads"]
     log:
-        "logs/{subtype}/{segment}/nextclade.log"
+        "logs/{segment}/{subtype}/nextclade.log"
     shell:
         """
         nextclade run {input.sequences} \
@@ -77,17 +93,17 @@ rule align_sequences:
 # output new FASTA, GFF, and GTF files for the curated reference sequence.
 rule curate_alignment:
     input:
-        alignment="results/{subtype}/{segment}/msa.fasta.xz",
-        gff="results/{subtype}/{segment}/reference/reference.gff"
+        alignment="results/{segment}/{subtype}/msa.fasta.xz",
+        gff="results/{segment}/{subtype}/reference/reference.gff"
     output:
-        curated_msa="results/{subtype}/{segment}/curated_msa.fasta.xz",
-        curated_ref_fasta="results/{subtype}/{segment}/curated_reference.fasta",
-        curated_ref_gff="results/{subtype}/{segment}/curated_reference.gff",
-        curated_ref_gtf="results/{subtype}/{segment}/curated_reference.gtf"
+        curated_msa="results/{segment}/{subtype}/curated_msa.fasta.xz",
+        curated_ref_fasta="results/{segment}/{subtype}/curated_reference.fasta",
+        curated_ref_gff="results/{segment}/{subtype}/curated_reference.gff",
+        curated_ref_gtf="results/{segment}/{subtype}/curated_reference.gtf"
     params:
-        output_dir="results/{subtype}/{segment}"
+        output_dir="results/{segment}/{subtype}"
     log:
-        "logs/{subtype}/{segment}/curate.log"
+        "logs/{segment}/{subtype}/curate.log"
     shell:
         """
         python scripts/curate_msa.py \
@@ -102,9 +118,9 @@ rule curate_alignment:
 # Convert the curated MSA to VCF format for UShER
 rule create_vcf:
     input:
-        curated_msa="results/{subtype}/{segment}/curated_msa.fasta.xz"
+        curated_msa="results/{segment}/{subtype}/curated_msa.fasta.xz"
     output:
-        "results/{subtype}/{segment}/curated_msa.vcf.gz"
+        "results/{segment}/{subtype}/curated_msa.vcf.gz"
     shell:
         """
         xzcat {input.curated_msa} \
@@ -115,16 +131,16 @@ rule create_vcf:
 # Create initial tree with usher-sampled
 rule create_initial_tree:
     input:
-        vcf="results/{subtype}/{segment}/curated_msa.vcf.gz"
+        vcf="results/{segment}/{subtype}/curated_msa.vcf.gz"
     output:
-        tree="results/{subtype}/{segment}/preopt_tree.pb.gz",
-        empty_tree=temp("results/{subtype}/{segment}/emptyTree.nwk")
+        tree="results/{segment}/{subtype}/preopt_tree.pb.gz",
+        empty_tree=temp("results/{segment}/{subtype}/emptyTree.nwk")
     params:
-        outdir="results/{subtype}/{segment}"
+        outdir="results/{segment}/{subtype}"
     threads: config["threads"]
     log:
-        stdout="logs/{subtype}/{segment}/usher-sampled.log",
-        stderr="logs/{subtype}/{segment}/usher-sampled.stderr"
+        stdout="logs/{segment}/{subtype}/usher-sampled.log",
+        stderr="logs/{segment}/{subtype}/usher-sampled.stderr"
     shell:
         """
         echo '()' > {output.empty_tree}
@@ -140,13 +156,13 @@ rule create_initial_tree:
 # Optimize the tree with matOptimize
 rule optimize_tree:
     input:
-        tree="results/{subtype}/{segment}/preopt_tree.pb.gz",
-        vcf="results/{subtype}/{segment}/curated_msa.vcf.gz"
+        tree="results/{segment}/{subtype}/preopt_tree.pb.gz",
+        vcf="results/{segment}/{subtype}/curated_msa.vcf.gz"
     output:
-        "results/{subtype}/{segment}/opt_tree.pb.gz"
+        "results/{segment}/{subtype}/opt_tree.pb.gz"
     threads: config["threads"]
     log:
-        "logs/{subtype}/{segment}/optimize.log"
+        "logs/{segment}/{subtype}/optimize.log"
     shell:
         """
         matOptimize -T {threads} -m 0.00000001 -M 1 \
@@ -159,12 +175,12 @@ rule optimize_tree:
 # Convert the optimized tree to Taxonium format for visualization
 rule convert_to_taxonium:
     input:
-        opt_tree="results/{subtype}/{segment}/opt_tree.pb.gz",
-        metadata="results/{subtype}/{subtype}_metadata.csv"
+        opt_tree="results/{segment}/{subtype}/opt_tree.pb.gz",
+        metadata="results/combined_metadata.csv"
     output:
-        "results/{subtype}/{segment}/opt_tree.jsonl.gz"
+        "results/{segment}/{subtype}/opt_tree.jsonl.gz"
     log:
-        "logs/{subtype}/{segment}/taxonium.log"
+        "logs/{segment}/{subtype}/taxonium.log"
     shell:
         """
         usher_to_taxonium \
@@ -175,3 +191,4 @@ rule convert_to_taxonium:
             --output {output} \
             &> {log}
         """
+
