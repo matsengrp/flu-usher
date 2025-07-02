@@ -22,7 +22,7 @@ segments:
   - "MP"
   - "NS"
 
-# Expected HA and NA subtypes
+# List of HA and NA subtypes to take through the entire pipeline
 ha_subtypes:
   - "H1"
   - "H3"
@@ -38,24 +38,24 @@ na_subtypes:
 # Reference accession numbers for each segment-subtype combination
 references:
   # HA references by subtype
-  "HA_H1": "NC_026433.1"
-  "HA_H3": "NC_007366.1"
-  "HA_H5": "NC_007362.1"
-  "HA_H7": "NC_026425.1"
-  "HA_H9": "NC_004908.1"
+  "HA_H1": "NC_002017.1" # A/Puerto Rico/8/1934
+  "HA_H3": "KF874500.2" # A/Aichi/2/1968
+  "HA_H5": "NC_007362.1" # A/goose/Guangdong/1/1996
+  "HA_H7": "NC_026425.1" # A/Shanghai/02/2013
+  "HA_H9": "NC_004908.1" # A/Hong Kong/1073/99
   
   # NA references by subtype
-  "NA_N1": "NC_026434.1"
-  "NA_N2": "NC_007368.1"
-  "NA_N9": "NC_026429.1"
+  "NA_N1": "NC_002018.1" # A/Puerto Rico/8/1934
+  "NA_N2": "CY121119.1" # A/Aichi/2/1968
+  "NA_N9": "NC_026429.1" # A/Shanghai/02/2013
   
-  # Other segments (using H1N1 as reference for all)
-  "PB2_all": "NC_026438.1"
-  "PB1_all": "NC_026435.1"
-  "PA_all": "NC_026437.1"
-  "NP_all": "NC_026436.1"
-  "MP_all": "NC_026431.1"
-  "NS_all": "NC_026432.1"
+  # Other segments (using H3N2 A/Aichi/2/1968 as reference for all)
+  "PB2_all": "CY121124.1"
+  "PB1_all": "CY121123.1"
+  "PA_all": "CY121122.1"
+  "NP_all": "CY121120.1"
+  "MP_all": "CY121118.1"
+  "NS_all": "CY121121.1"
 
 # Parameters for sequence curation
 max_frac_gaps: 0.05
