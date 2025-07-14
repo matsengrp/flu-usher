@@ -39,7 +39,7 @@ flu-usher/
 
 1. **Set up your environment**
 
-   ```bash
+   ```
    # Create the conda environment
    conda env create -f environment.yml
    
@@ -73,17 +73,8 @@ flu-usher/
 
 4. **Run the pipeline**
 
-   ```bash
-   # Test run (dry-run)
-   snakemake -np
-   
-   # Run the full pipeline
-   snakemake --cores <number_of_cores>
-   
-   # Run for specific segment-subtype combinations
-   snakemake --cores 8 results/HA/H5/opt_tree.pb.gz
-   snakemake --cores 8 results/NA/N1/opt_tree.pb.gz
-   snakemake --cores 8 results/PB2/all/opt_tree.pb.gz
+   ```
+   snakemake --cores <number_of_cores> --use-conda
    ```
 
 5. **Output**
