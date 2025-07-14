@@ -1,4 +1,6 @@
 data/
-results/
+results*/
 logs/
 .snakemake/
+sbatch*
+run.sbatch

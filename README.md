@@ -1,48 +1,6 @@
 # Flu-UShER Pipeline
 
-A Snakemake pipeline for building phylogenetic trees of influenza virus sequences using UShER.
-
-## TODO
-
-* start downloading additional H1N1 data
-* workflow:
-   * build single tree with sequences from all hosts
-   * generate counts from big tree
-   * also generate counts from tree subset to sequences from a given host or subtype or whatever
-* For HA and NA, build one tree for each subtype regardless of the subtype of other segments
-   * H1, H3, H5, H7, H9
-   * N1, N2, N9
-* For other genes, build one tree with all genes across all subtypes
-   * PB2
-   * PB1
-   * etc.
-* Could specify which subtypes to combine for each segment, like:
-   * N1: H1N1, H5N1
-   * PB2: H1N1, N3N2, etc.
-   * could use H3N2 reference when combining across all subtypes
-* Get a handle on the overall topologies of the trees
-
-* summary plots
-   * summary plots for alignments
-      * number downloaded, length distribution, number retained, frac gaps at each site
-   * summary plots for final sequences
-      * number of sequences per host
-      * number of sequences sampled over time
-   * summary of trees
-      * number of mutations per branch
-
-* using workaround for H1N1 HA
-
-* how identify mutations in test set that go against DASM expectations?
-* how identify mutations that go against DMS expectations? Fit selection factor * DMS? How assess significance?
-* add tests?
-* filter out nonhuman sequences for H3N2?
-* allow more mutations per branch? For SARS2 was for whole genome; for flu is only for part; so already more than before
-
-* H5N1 NS: why did the alignment step filter out so many sequences?
-
-* rerooting (genome with sequences for all segments)
-* add code for computing counts to pipeline
+A Snakemake pipeline for building phylogenetic trees of influenza virus sequences using UShER. The pipeline processes influenza sequences by segment and subtype, creating separate trees for HA and NA segments by subtype (e.g., H1, H3, N1, N2) while combining all subtypes for other segments (PB2, PB1, PA, NP, MP, NS).
 
 ## Directory Structure
 
@@ -51,12 +9,25 @@ flu-usher/
 ├── Snakefile                # Main pipeline file
 ├── config/
 │   └── config.yaml          # Configuration file
-├── data/                    # Input data directory (organized by subtype)
-│   └── H7N9/                # Example input directory for H7N9 subtype
+├── data/                    # Input data directories
+│   ├── H1N1/                # Example: H1N1 sequences (all segments)
+│   ├── H3N2/                # Example: H3N2 sequences (all segments)
+│   ├── H5N1/                # Example: H5N1 sequences (all segments)
+│   └── H7N9/                # Example: H7N9 sequences (all segments)
 │       ├── sequences.fasta  # One or more FASTA files containing sequences
-│       └── metadata.xls     # One or more metadata files in Excel format
+│       └── metadata.xls     # One or more metadata files from GISAID
 ├── logs/                    # Log files (created by the pipeline)
-├── results/                 # Output results (organized by subtype-segment)
+├── results/                 # Output results (organized by segment/subtype)
+│   ├── HA/                  # HA segment results by subtype
+│   │   ├── H1/              # H1 subtype tree and files
+│   │   ├── H3/              # H3 subtype tree and files
+│   │   └── ...
+│   ├── NA/                  # NA segment results by subtype
+│   │   ├── N1/              # N1 subtype tree and files
+│   │   ├── N2/              # N2 subtype tree and files
+│   │   └── ...
+│   └── PB2/                 # Other segment results
+│       └── all/             # All subtypes combined
 ├── scripts/
 │   ├── parse_gisaid_data.py # Script to parse GISAID data by segment
 │   ├── curate_msa.py        # Sequence curation script
@@ -79,21 +50,26 @@ flu-usher/
 2. **Configure the pipeline**
 
    Edit `config/config.yaml` to:
-   - List your subtypes and segments to analyze
-   - Set reference accession numbers for each subtype-segment combination
-   - Adjust filtering thresholds for sequence curation
+   - Specify input directories containing your GISAID data
+   - List HA subtypes to analyze (e.g., H1, H3, H5, H7, H9)
+   - List NA subtypes to analyze (e.g., N1, N2, N9)
+   - Set reference accession numbers for each segment-subtype combination
+   - Adjust filtering thresholds for sequence curation (max gaps and ambiguities)
+   - Set maximum parsimony score for branch pruning (default: 20)
    - Set desired number of threads
 
 3. **Prepare your GISAID data**
 
-   For each influenza subtype you want to analyze (e.g., H7N9):
-   - Create a directory under `data/` with the name of the subtype (e.g., `data/H7N9/`)
-   - Place at least one FASTA file containing sequences in the directory (e.g., `data/H7N9/sequences.fasta`)
-   - Place at least one Excel (.xls) metadata file in the same directory (e.g., `data/H7N9/metadata.xls`)
+   The pipeline expects two types of files with input data downloaded from GISAID:
+   - One or more FASTA files containing nucleotide sequences
+      - FASTA sequence ID format: `EPI|SEGMENT|NAME|EPI_ISL|SUBTYPE`
+   - One or more XLS files with metadata for the above sequences
    
-   The pipeline will aggregate data from all FASTA and metadata files present in each subtype directory.
-   
-   The FASTA file should have sequence IDs in the format: `EPI|SEGMENT|NAME|EPI_ISL|SUBTYPE`
+   The pipeline will automatically:
+   - Aggregate all FASTA and metadata files from each input directory
+   - Parse sequences by segment
+   - Group HA and NA segments by subtype (defined by the `subtype` column in the metadata file)
+   - Combine all subtypes for internal segments (PB2, PB1, PA, NP, MP, NS)
 
 4. **Run the pipeline**
 
@@ -101,36 +77,74 @@ flu-usher/
    # Test run (dry-run)
    snakemake -np
    
-   # Run the pipeline
+   # Run the full pipeline
    snakemake --cores <number_of_cores>
    
-   # Run for specific subtype-segment combinations
-   snakemake --cores <number_of_cores> results/H7N9-HA/opt_tree.pb.gz
+   # Run for specific segment-subtype combinations
+   snakemake --cores 8 results/HA/H5/opt_tree.pb.gz
+   snakemake --cores 8 results/NA/N1/opt_tree.pb.gz
+   snakemake --cores 8 results/PB2/all/opt_tree.pb.gz
    ```
 
 5. **Output**
 
-   For each subtype/segment combination, the pipeline produces:
-   - `results/<subtype>/<segment>/raw_sequences.fasta`: Parsed sequences for this segment
-   - `results/<subtype>/<segment>/reference/`: Reference data for Nextclade
-   - `results/<subtype>/<segment>/msa.fasta.xz`: Aligned sequences
-   - `results/<subtype>/<segment>/curated_msa.fasta.xz`: Curated alignment
-   - `results/<subtype>/<segment>/curated_reference.gff`: GFF that matches the curated alignment
-   - `results/<subtype>/<segment>/curated_msa.vcf.gz`: VCF format for UShER
-   - `results/<subtype>/<segment>/preopt_tree.pb.gz`: Initial UShER tree
-   - `results/<subtype>/<segment>/opt_tree.pb.gz`: Optimized tree
-   - `results/<subtype>/<segment>/opt_tree.jsonl.gz`: Taxonium visualization file
+   The pipeline organizes outputs by segment and subtype:
+   
+   **For HA and NA segments** (e.g., `results/HA/H5/` or `results/NA/N1/`):
+   - `raw_sequences.fasta.xz`: Parsed sequences for this segment-subtype
+   - `reference/`: Reference sequence and Nextclade dataset files
+   - `msa.fasta.xz`: Multiple sequence alignment from Nextclade
+   - `curated_msa.fasta.xz`: Quality-filtered alignment (e.g., gaps < 5%, ambiguities < 1%)
+   - `curated_reference.fasta/gff/gtf`: Reference files matching the curated alignment
+   - `curated_msa.vcf.gz`: Variant call format file for UShER
+   - `preopt_tree.pb.gz`: Initial parsimony tree
+   - `pruned_tree.pb.gz`: Tree with long-branch leaves removed
+   - `opt_tree.pb.gz`: Optimized phylogenetic tree
+   - `opt_tree.jsonl.gz`: Interactive Taxonium visualization file
+   
+   **For the other segments** (e.g., `results/PB2/all/` or `results/NP/all/`):
+   - Same outputs as above, but combining all influenza subtypes
+   
+   **Global outputs**:
+   - `results/combined_metadata.csv`: Aggregated metadata from all input files
 
 ## Pipeline Steps
 
-1. **Parse GISAID data**: Splits combined FASTA files into segment-specific files and creates metadata file
-2. **Download reference**: Fetches reference sequences and creates Nextclade dataset
-3. **Align sequences**: Uses Nextclade to align sequences to reference
-4. **Curate alignment**: Extracts coding regions and sanitizes sequence IDs
-5. **Create VCF**: Converts alignment to VCF format for UShER
-6. **Build initial tree**: Uses UShER to create a parsimony-based tree
-7. **Optimize tree**: Uses matOptimize to refine the tree
-8. **Create visualization**: Converts tree to Taxonium format for interactive viewing
+1. **Parse GISAID data** (`parse_gisaid_data.py`): 
+   - Aggregates sequences from multiple input directories
+   - Splits by segment and subtype
+   - Creates unified metadata file
+   
+2. **Download reference** (`download_ref_seq.py`): 
+   - Fetches appropriate reference sequence for each segment-subtype
+   - Creates Nextclade dataset configuration
+   
+3. **Align sequences** (Nextclade): 
+   - Performs codon-aware alignment to reference
+   - Includes reference in the output alignment
+   
+4. **Curate alignment** (`curate_msa.py`): 
+   - Filters sequences by quality (gaps, ambiguities)
+   - Extracts only coding regions based on GFF annotations
+   - Sanitizes sequence IDs for UShER compatibility
+   
+5. **Create VCF** (faToVcf): 
+   - Converts FASTA alignment to variant format
+   - Includes reference and handles ambiguous nucleotides
+   
+6. **Build initial tree** (usher-sampled): 
+   - Creates parsimony-based phylogenetic tree
+   
+7. **Prune tree** (matUtils extract): 
+   - Removes leaf nodes with very long branches (>20 parsimony score by default)
+   - These nodes can artificially arise from sequences with many gap or ambiguous characters, as these characters are filled in with the reference sequence when making the UShER tree.
+   
+8. **Optimize tree** (matOptimize): 
+   - Refines tree topology to minimize parsimony score
+   
+9. **Create visualization** (usher_to_taxonium): 
+   - Converts tree to Taxonium format
+   - Incorporates metadata for interactive exploration
 
 ## Requirements
 
