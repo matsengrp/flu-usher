@@ -275,8 +275,15 @@ def filter_sequences(records, ambiguous_characters, max_frac_gaps, max_frac_ambi
     
     for record in records:
         metrics = analyze_record(record, ambiguous_characters)
+
+        # Check if the first 3 or last 3 nucleotides are gaps
+        seq_str = str(record.seq)
+        has_terminal_gaps = ('---' == seq_str[:3]) or ('---' == seq_str[-3:])
         
-        if metrics['frac_gaps'] < max_frac_gaps and metrics['frac_ambiguous'] < max_frac_ambig:
+        # Filter based on gap and ambiguous nucleotide content
+        if has_terminal_gaps:
+            logger.info(f"Filtered out {record.id}: has gaps in first 3 or last 3 nucleotides")
+        elif metrics['frac_gaps'] < max_frac_gaps and metrics['frac_ambiguous'] < max_frac_ambig:
             filtered_records.append(record)
         else:
             logger.info(f"Filtered out {record.id}: gaps={metrics['frac_gaps']:.3f}, ambig={metrics['frac_ambiguous']:.3f}")

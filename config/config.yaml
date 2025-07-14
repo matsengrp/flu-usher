@@ -58,6 +58,9 @@ references:
   "NS_all": "CY121121.1"
 
 # Parameters for sequence curation
-max_frac_gaps: 0.05
-max_frac_ambig: 0.01
+max_frac_gaps: 0.03
+max_frac_ambig: 0.005
+
+# Parameters for tree pruning
+max_parsimony: 20
 

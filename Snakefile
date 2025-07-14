@@ -153,10 +153,28 @@ rule create_initial_tree:
             > {log.stdout} 2> {log.stderr}
         """
 
+# Prune tree to remove leaf nodes with very long branches
+rule prune_tree:
+    input:
+        tree="results/{segment}/{subtype}/preopt_tree.pb.gz"
+    output:
+        "results/{segment}/{subtype}/pruned_tree.pb.gz"
+    params:
+        max_parsimony=config["max_parsimony"]
+    log:
+        "logs/{segment}/{subtype}/prune.log"
+    shell:
+        """
+        matUtils extract -i {input.tree} \
+            -o {output} \
+            -a {params.max_parsimony} \
+            &> {log}
+        """
+
 # Optimize the tree with matOptimize
 rule optimize_tree:
     input:
-        tree="results/{segment}/{subtype}/preopt_tree.pb.gz",
+        tree="results/{segment}/{subtype}/pruned_tree.pb.gz",
         vcf="results/{segment}/{subtype}/curated_msa.vcf.gz"
     output:
         "results/{segment}/{subtype}/opt_tree.pb.gz"
@@ -165,7 +183,7 @@ rule optimize_tree:
         "logs/{segment}/{subtype}/optimize.log"
     shell:
         """
-        matOptimize -T {threads} -m 0.00000001 -M 1 \
+        matOptimize -T {threads} -m 0.00000001 -M 5 \
             -i {input.tree} \
             -v {input.vcf} \
             -o {output} \

@@ -15,7 +15,7 @@ flu-usher/
 │   ├── H5N1/                # Example: H5N1 sequences (all segments)
 │   └── H7N9/                # Example: H7N9 sequences (all segments)
 │       ├── sequences.fasta  # One or more FASTA files containing sequences
-│       └── metadata.xls     # One or more metadata files in Excel format
+│       └── metadata.xls     # One or more metadata files from GISAID
 ├── logs/                    # Log files (created by the pipeline)
 ├── results/                 # Output results (organized by segment/subtype)
 │   ├── HA/                  # HA segment results by subtype
@@ -55,6 +55,7 @@ flu-usher/
    - List NA subtypes to analyze (e.g., N1, N2, N9)
    - Set reference accession numbers for each segment-subtype combination
    - Adjust filtering thresholds for sequence curation (max gaps and ambiguities)
+   - Set maximum parsimony score for branch pruning (default: 20)
    - Set desired number of threads
 
 3. **Prepare your GISAID data**
@@ -97,6 +98,7 @@ flu-usher/
    - `curated_reference.fasta/gff/gtf`: Reference files matching the curated alignment
    - `curated_msa.vcf.gz`: Variant call format file for UShER
    - `preopt_tree.pb.gz`: Initial parsimony tree
+   - `pruned_tree.pb.gz`: Tree with long-branch leaves removed
    - `opt_tree.pb.gz`: Optimized phylogenetic tree
    - `opt_tree.jsonl.gz`: Interactive Taxonium visualization file
    
@@ -133,10 +135,14 @@ flu-usher/
 6. **Build initial tree** (usher-sampled): 
    - Creates parsimony-based phylogenetic tree
    
-7. **Optimize tree** (matOptimize): 
+7. **Prune tree** (matUtils extract): 
+   - Removes leaf nodes with very long branches (>20 parsimony score by default)
+   - These nodes can artificially arise from sequences with many gap or ambiguous characters, as these characters are filled in with the reference sequence when making the UShER tree.
+   
+8. **Optimize tree** (matOptimize): 
    - Refines tree topology to minimize parsimony score
    
-8. **Create visualization** (usher_to_taxonium): 
+9. **Create visualization** (usher_to_taxonium): 
    - Converts tree to Taxonium format
    - Incorporates metadata for interactive exploration
 
