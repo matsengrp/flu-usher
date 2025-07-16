@@ -38,7 +38,7 @@ na_subtypes:
 # Reference accession numbers for each segment-subtype combination
 references:
   # HA references by subtype
-  "HA_H1": "NC_002017.1" # A/Puerto Rico/8/1934
+  "HA_H1": "NC_026433.1" # A/California/07/2009
   "HA_H3": "KF874500.2" # A/Aichi/2/1968
   "HA_H5": "NC_007362.1" # A/goose/Guangdong/1/1996
   "HA_H7": "NC_026425.1" # A/Shanghai/02/2013
@@ -63,4 +63,11 @@ max_frac_ambig: 0.005
 
 # Parameters for tree pruning
 max_parsimony: 20
+
+# Tree rerooting configuration
+# Specify which segment-subtype combinations should have their trees rerooted
+# Format: "SEGMENT_SUBTYPE": "new_root_node"
+# Combinations not listed here will not be rerooted
+reroot:
+  "HA_H1": "EPI_ISL_19703745"
 

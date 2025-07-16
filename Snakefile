@@ -2,23 +2,24 @@
 import glob
 configfile: "config/config.yaml"
 
+
 # Define the final outputs that should be created for each segment-subtype combination
 rule all:
     input:
         # Trees for HA segments by subtype
-        expand("results/HA/{subtype}/opt_tree.pb.gz", 
+        expand("results/HA/{subtype}/final_tree.pb.gz", 
                subtype=config["ha_subtypes"]),
-        expand("results/HA/{subtype}/opt_tree.jsonl.gz", 
+        expand("results/HA/{subtype}/final_tree.jsonl.gz", 
                subtype=config["ha_subtypes"]),
         # Trees for NA segments by subtype
-        expand("results/NA/{subtype}/opt_tree.pb.gz", 
+        expand("results/NA/{subtype}/final_tree.pb.gz", 
                subtype=config["na_subtypes"]),
-        expand("results/NA/{subtype}/opt_tree.jsonl.gz", 
+        expand("results/NA/{subtype}/final_tree.jsonl.gz", 
                subtype=config["na_subtypes"]),
         # Trees for other segments (all subtypes combined)
-        expand("results/{segment}/all/opt_tree.pb.gz",
+        expand("results/{segment}/all/final_tree.pb.gz",
                segment=[s for s in config["segments"] if s not in ["HA", "NA"]]),
-        expand("results/{segment}/all/opt_tree.jsonl.gz",
+        expand("results/{segment}/all/final_tree.jsonl.gz",
                segment=[s for s in config["segments"] if s not in ["HA", "NA"]])
 
 # Parse GISAID data files from all input directories at once
@@ -172,6 +173,7 @@ rule prune_tree:
         """
 
 # Optimize the tree with matOptimize
+# -v {input.vcf} \ # TODO: fix this bug
 rule optimize_tree:
     input:
         tree="results/{segment}/{subtype}/pruned_tree.pb.gz",
@@ -185,24 +187,48 @@ rule optimize_tree:
         """
         matOptimize -T {threads} -m 0.00000001 -M 5 \
             -i {input.tree} \
-            -v {input.vcf} \
             -o {output} \
             &> {log}
         """
 
-# Convert the optimized tree to Taxonium format for visualization
+# Reroot the tree if specified in config, otherwise create symlink
+rule reroot_tree:
+    input:
+        "results/{segment}/{subtype}/opt_tree.pb.gz"
+    output:
+        "results/{segment}/{subtype}/final_tree.pb.gz"
+    log:
+        "logs/{segment}/{subtype}/reroot.log"
+    run:
+        key = f"{wildcards.segment}_{wildcards.subtype}"
+        if key in config.get("reroot", {}):
+            new_root = config["reroot"][key]
+            shell("""
+                matUtils extract -i {input} \
+                    -o {output} \
+                    -y {new_root} \
+                    &> {log}
+            """)
+        else:
+            shell("""
+                ln -sf $(basename {input}) {output} \
+                && echo "Created symlink for {key} (no rerooting specified)" > {log}
+            """)
+
+
+# Convert the final tree to Taxonium format for visualization
 rule convert_to_taxonium:
     input:
-        opt_tree="results/{segment}/{subtype}/opt_tree.pb.gz",
+        final_tree="results/{segment}/{subtype}/final_tree.pb.gz",
         metadata="results/combined_metadata.csv"
     output:
-        "results/{segment}/{subtype}/opt_tree.jsonl.gz"
+        "results/{segment}/{subtype}/final_tree.jsonl.gz"
     log:
         "logs/{segment}/{subtype}/taxonium.log"
     shell:
         """
         usher_to_taxonium \
-            --input {input.opt_tree} \
+            --input {input.final_tree} \
             --metadata {input.metadata} \
             --key_column isolate_id \
             --columns isolate_name,subtype,clade,passage_history,location,host,collection_date \
