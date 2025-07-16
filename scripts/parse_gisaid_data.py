@@ -48,7 +48,7 @@ def main():
         os.makedirs(args.output_dir)
     
     # List of segments to keep (from config file or all segments if not specified)
-    valid_segments = set(args.segments) if args.segments else None
+    # valid_segments = set(args.segments) if args.segments else None
     
     # Iterate over sequences, group by segment (and subtype for HA/NA)
     # For HA/NA: segment_records[segment][subtype] = [records]
@@ -88,8 +88,8 @@ def main():
                     (epi, segment, name, epi_isl, seq_subtype) = record.id.split('|')
                     
                     # Skip segments not in the config file
-                    if valid_segments and segment not in valid_segments:
-                        continue
+                    # if valid_segments and segment not in valid_segments:
+                    #     continue
                     
                     # Determine the grouping key based on segment type
                     if segment == 'HA':

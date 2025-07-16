@@ -10,6 +10,21 @@ input_dirs:
   - "data/H5N1"
   - "data/H7N9"
   - "data/H9N2"
+  - "data/H1NX"
+  - "data/H2NX"
+  - "data/H3NX"
+  - "data/H4NX"
+  - "data/H5NX"
+  - "data/H6NX"
+  - "data/H7NX"
+  - "data/H8NX"
+  - "data/H9NX"
+  - "data/H10NX"
+  - "data/H11NX"
+  - "data/H12NX"
+  - "data/H13NX"
+  - "data/H14NX"
+  - "data/H15NX"
 
 # Segments to analyze
 segments:
