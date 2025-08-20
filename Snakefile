@@ -12,10 +12,10 @@ rule all:
         expand("results/HA/{subtype}/final_tree.jsonl.gz", 
                subtype=config["ha_subtypes"]),
         # Trees for NA segments by subtype
-        expand("results/NA/{subtype}/final_tree.pb.gz", 
-               subtype=config["na_subtypes"]),
-        expand("results/NA/{subtype}/final_tree.jsonl.gz", 
-               subtype=config["na_subtypes"]),
+#        expand("results/NA/{subtype}/final_tree.pb.gz", 
+#               subtype=config["na_subtypes"]),
+#        expand("results/NA/{subtype}/final_tree.jsonl.gz", 
+#               subtype=config["na_subtypes"]),
         # Trees for other segments (all subtypes combined)
         expand("results/{segment}/all/final_tree.pb.gz",
                segment=[s for s in config["segments"] if s not in ["HA", "NA"]]),
@@ -92,6 +92,7 @@ rule align_sequences:
 # Curate the alignment to only include sites in the CDS of the reference, and sanitize IDs
 # so that they do not include special characters that lead to errors in UShER jobs. Also
 # output new FASTA, GFF, and GTF files for the curated reference sequence.
+# --replace_gaps_with_ref
 rule curate_alignment:
     input:
         alignment="results/{segment}/{subtype}/msa.fasta.xz",
@@ -99,6 +100,7 @@ rule curate_alignment:
     output:
         curated_msa="results/{segment}/{subtype}/curated_msa.fasta.xz",
         curated_ref_fasta="results/{segment}/{subtype}/curated_reference.fasta",
+        curated_ref_txt="results/{segment}/{subtype}/curated_reference.txt",
         curated_ref_gff="results/{segment}/{subtype}/curated_reference.gff",
         curated_ref_gtf="results/{segment}/{subtype}/curated_reference.gtf"
     params:
@@ -113,88 +115,197 @@ rule curate_alignment:
             --gff {input.gff} \
             --max_frac_gaps {config[max_frac_gaps]} \
             --max_frac_ambig {config[max_frac_ambig]} \
+            --filter_duplicates \
             &> {log}
         """
 
-# Convert the curated MSA to VCF format for UShER
-rule create_vcf:
+# Randomize the alignment order while keeping the reference at the top
+rule randomize_alignment:
     input:
         curated_msa="results/{segment}/{subtype}/curated_msa.fasta.xz"
     output:
-        "results/{segment}/{subtype}/curated_msa.vcf.gz"
+        "results/{segment}/{subtype}/randomized_{n}/msa.fasta.xz"
+    params:
+        seed=lambda wildcards: int(wildcards.n)
+    log:
+        "logs/{segment}/{subtype}/randomize_{n}.log"
     shell:
         """
-        xzcat {input.curated_msa} \
-        | faToVcf -includeRef -includeNoAltN stdin stdout \
-        | gzip > {output}
+        python scripts/randomize_alignment.py \
+            --input {input.curated_msa} \
+            --output {output} \
+            --seed {params.seed} \
+            &> {log}
+        """
+
+# Convert the MSA to VCF format for UShER
+rule create_vcf:
+    input:
+        msa="results/{segment}/{subtype}/randomized_{n}/msa.fasta.xz"
+    output:
+        "results/{segment}/{subtype}/randomized_{n}/msa.vcf"
+    log:
+        "logs/{segment}/{subtype}/randomized_{n}/create_vcf.log"
+    shell:
+        """
+        xzcat {input.msa} \
+        | faToVcf -includeRef -includeNoAltN stdin {output} 2> {log}
         """
 
 # Create initial tree with usher-sampled
+# TODO add this arg back in? -e 5
 rule create_initial_tree:
     input:
-        vcf="results/{segment}/{subtype}/curated_msa.vcf.gz"
+        vcf="results/{segment}/{subtype}/randomized_{n}/msa.vcf"
     output:
-        tree="results/{segment}/{subtype}/preopt_tree.pb.gz",
-        empty_tree=temp("results/{segment}/{subtype}/emptyTree.nwk")
+        tree="results/{segment}/{subtype}/randomized_{n}/preopt_tree.pb.gz",
+        empty_tree=temp("results/{segment}/{subtype}/randomized_{n}/emptyTree.nwk")
     params:
-        outdir="results/{segment}/{subtype}"
+        outdir="results/{segment}/{subtype}/randomized_{n}"
     threads: config["threads"]
     log:
-        stdout="logs/{segment}/{subtype}/usher-sampled.log",
-        stderr="logs/{segment}/{subtype}/usher-sampled.stderr"
+        stdout="logs/{segment}/{subtype}/randomized_{n}/usher-sampled.log",
+        stderr="logs/{segment}/{subtype}/randomized_{n}/usher-sampled.stderr"
     shell:
         """
         echo '()' > {output.empty_tree}
-        usher-sampled -T {threads} -A -e 5 \
+        usher-sampled -T {threads} -A \
             -t {output.empty_tree} \
             -v {input.vcf} \
             -d {params.outdir}/ \
             -o {output.tree} \
-            --optimization_radius 0 --batch_size_per_process 100 \
+            --optimization_radius 0 --batch_size_per_process 5 \
             > {log.stdout} 2> {log.stderr}
         """
 
-# Prune tree to remove leaf nodes with very long branches
-rule prune_tree:
-    input:
-        tree="results/{segment}/{subtype}/preopt_tree.pb.gz"
-    output:
-        "results/{segment}/{subtype}/pruned_tree.pb.gz"
-    params:
-        max_parsimony=config["max_parsimony"]
-    log:
-        "logs/{segment}/{subtype}/prune.log"
-    shell:
-        """
-        matUtils extract -i {input.tree} \
-            -o {output} \
-            -a {params.max_parsimony} \
-            &> {log}
-        """
-
 # Optimize the tree with matOptimize
-# -v {input.vcf} \ # TODO: fix this bug
 rule optimize_tree:
     input:
-        tree="results/{segment}/{subtype}/pruned_tree.pb.gz",
-        vcf="results/{segment}/{subtype}/curated_msa.vcf.gz"
+        tree="results/{segment}/{subtype}/randomized_{n}/preopt_tree.pb.gz",
+        vcf="results/{segment}/{subtype}/randomized_{n}/msa.vcf"
     output:
-        "results/{segment}/{subtype}/opt_tree.pb.gz"
+        "results/{segment}/{subtype}/randomized_{n}/opt_tree.pb.gz"
     threads: config["threads"]
     log:
-        "logs/{segment}/{subtype}/optimize.log"
+        "logs/{segment}/{subtype}/randomized_{n}/optimize.log"
     shell:
         """
         matOptimize -T {threads} -m 0.00000001 -M 5 \
             -i {input.tree} \
+            -v {input.vcf} \
             -o {output} \
             &> {log}
+        """
+
+# Convert the optimized tree to a DAG using larch-usher
+rule tree_to_dag:
+    input:
+        tree="results/{segment}/{subtype}/randomized_{n}/opt_tree.pb.gz",
+        ref="results/{segment}/{subtype}/curated_reference.txt",
+        vcf="results/{segment}/{subtype}/randomized_{n}/msa.vcf"
+    output:
+        "results/{segment}/{subtype}/randomized_{n}/dag.pb"
+    conda:
+        "larch"
+    log:
+        "logs/{segment}/{subtype}/randomized_{n}/tree_to_dag.log"
+    shell:
+        """
+        larch-usher -i {input.tree} \
+            -r {input.ref} \
+            -v {input.vcf} \
+            -o {output} \
+            -c 0 \
+            &> {log}
+        """
+
+# Use larch to merge multiple DAGs into a single DAG
+rule larch_merge:
+    input:
+        dags=expand("results/{{segment}}/{{subtype}}/randomized_{n}/dag.pb",
+                    n=range(config["n_randomizations"]))
+    output:
+        "results/{segment}/{subtype}/larch_merged_dag.pb"
+    conda:
+        "larch"
+    log:
+        "logs/{segment}/{subtype}/larch_merge.log"
+    params:
+        dag_args=lambda wildcards, input: " ".join([f"-i {dag}" for dag in input.dags])
+    shell:
+        """
+        larch-dagutil \
+            {params.dag_args} \
+            --trim \
+            -o {output} \
+            &> {log}
+        """
+
+# Use larch-usher to optimize the trees
+rule larch_optimize:
+    input:
+        dag="results/{segment}/{subtype}/larch_merged_dag.pb",
+    output:
+        opt_dag="results/{segment}/{subtype}/larch_optimized_dag.pb"
+    conda:
+        "larch"
+    log:
+        "logs/{segment}/{subtype}/larch_optimize.log"
+    shell:
+        """
+        larch-usher -i {input.dag} \
+            -o {output.opt_dag} \
+            -c 1 \
+            -s 0 \
+            --max-subtree-clade-size 2000 \
+            --trim \
+            &> {log}
+        """
+
+# Trim the DAG to remove suboptimal trees
+rule trim_dag:
+    input:
+        dag_protobuf="results/{segment}/{subtype}/larch_optimized_dag.pb"
+    output:
+        trimmed_dag_protobuf="results/{segment}/{subtype}/trimmed_dag.pb"
+    conda:
+        "historydag"
+    log:
+        "logs/{segment}/{subtype}/trim_dag.log"
+    script:
+        "scripts/trim_dag.py"
+
+# Create a newick tree from the trimmed DAG
+rule create_newick:
+    input:
+        dag_protobuf="results/{segment}/{subtype}/trimmed_dag.pb"
+    output:
+        newick="results/{segment}/{subtype}/sampled_tree.nh"
+    conda:
+        "historydag"
+    log:
+        "logs/{segment}/{subtype}/create_newick.log"
+    script:
+        "scripts/convert_DAG_protobuf_to_newick_samples.py"
+
+# Create MAT protobuf from newick tree
+rule create_mat_protobuf:
+    input:
+        nh_file="results/{segment}/{subtype}/sampled_tree.nh",
+        vcf_file="results/{segment}/{subtype}/randomized_0/msa.vcf"
+    output:
+        protobuf_name="results/{segment}/{subtype}/sampled_tree.pb.gz"
+    log:
+        "logs/{segment}/{subtype}/create_mat_protobuf.log"
+    shell:
+        """
+        matOptimize -t {input.nh_file} -v {input.vcf_file} -o {output.protobuf_name} -N 0 &> {log}
         """
 
 # Reroot the tree if specified in config, otherwise create symlink
 rule reroot_tree:
     input:
-        "results/{segment}/{subtype}/opt_tree.pb.gz"
+        "results/{segment}/{subtype}/sampled_tree.pb.gz"
     output:
         "results/{segment}/{subtype}/final_tree.pb.gz"
     log:
@@ -216,6 +327,8 @@ rule reroot_tree:
             """)
 
 
+# TODO condense trees before feeding them to taxonium
+
 # Convert the final tree to Taxonium format for visualization
 rule convert_to_taxonium:
     input:
@@ -235,4 +348,3 @@ rule convert_to_taxonium:
             --output {output} \
             &> {log}
         """
-
