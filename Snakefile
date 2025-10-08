@@ -12,10 +12,10 @@ rule all:
         expand("results/HA/{subtype}/final_tree.jsonl.gz", 
                subtype=config["ha_subtypes"]),
         # Trees for NA segments by subtype
-#        expand("results/NA/{subtype}/final_tree.pb.gz", 
-#               subtype=config["na_subtypes"]),
-#        expand("results/NA/{subtype}/final_tree.jsonl.gz", 
-#               subtype=config["na_subtypes"]),
+        expand("results/NA/{subtype}/final_tree.pb.gz", 
+               subtype=config["na_subtypes"]),
+        expand("results/NA/{subtype}/final_tree.jsonl.gz", 
+               subtype=config["na_subtypes"]),
         # Trees for other segments (all subtypes combined)
         expand("results/{segment}/all/final_tree.pb.gz",
                segment=[s for s in config["segments"] if s not in ["HA", "NA"]]),
@@ -124,11 +124,11 @@ rule randomize_alignment:
     input:
         curated_msa="results/{segment}/{subtype}/curated_msa.fasta.xz"
     output:
-        "results/{segment}/{subtype}/randomized_{n}/msa.fasta.xz"
+        "results/{segment}/{subtype}/compute_consensus_seqs/randomized_{n}/msa.fasta.xz"
     params:
         seed=lambda wildcards: int(wildcards.n)
     log:
-        "logs/{segment}/{subtype}/randomize_{n}.log"
+        "logs/{segment}/{subtype}/compute_consensus_seqs/randomize_{n}.log"
     shell:
         """
         python scripts/randomize_alignment.py \
@@ -141,11 +141,11 @@ rule randomize_alignment:
 # Convert the MSA to VCF format for UShER
 rule create_vcf:
     input:
-        msa="results/{segment}/{subtype}/randomized_{n}/msa.fasta.xz"
+        msa="results/{segment}/{subtype}/compute_consensus_seqs/randomized_{n}/msa.fasta.xz"
     output:
-        "results/{segment}/{subtype}/randomized_{n}/msa.vcf"
+        "results/{segment}/{subtype}/compute_consensus_seqs/randomized_{n}/msa.vcf"
     log:
-        "logs/{segment}/{subtype}/randomized_{n}/create_vcf.log"
+        "logs/{segment}/{subtype}/compute_consensus_seqs/randomized_{n}/create_vcf.log"
     shell:
         """
         xzcat {input.msa} \
@@ -156,16 +156,16 @@ rule create_vcf:
 # TODO add this arg back in? -e 5
 rule create_initial_tree:
     input:
-        vcf="results/{segment}/{subtype}/randomized_{n}/msa.vcf"
+        vcf="results/{segment}/{subtype}/compute_consensus_seqs/randomized_{n}/msa.vcf"
     output:
-        tree="results/{segment}/{subtype}/randomized_{n}/preopt_tree.pb.gz",
-        empty_tree=temp("results/{segment}/{subtype}/randomized_{n}/emptyTree.nwk")
+        tree="results/{segment}/{subtype}/compute_consensus_seqs/randomized_{n}/preopt_tree.pb.gz",
+        empty_tree=temp("results/{segment}/{subtype}/compute_consensus_seqs/randomized_{n}/emptyTree.nwk")
     params:
-        outdir="results/{segment}/{subtype}/randomized_{n}"
+        outdir="results/{segment}/{subtype}/compute_consensus_seqs/randomized_{n}"
     threads: config["threads"]
     log:
-        stdout="logs/{segment}/{subtype}/randomized_{n}/usher-sampled.log",
-        stderr="logs/{segment}/{subtype}/randomized_{n}/usher-sampled.stderr"
+        stdout="logs/{segment}/{subtype}/compute_consensus_seqs/randomized_{n}/usher-sampled.log",
+        stderr="logs/{segment}/{subtype}/compute_consensus_seqs/randomized_{n}/usher-sampled.stderr"
     shell:
         """
         echo '()' > {output.empty_tree}
@@ -181,13 +181,13 @@ rule create_initial_tree:
 # Optimize the tree with matOptimize
 rule optimize_tree:
     input:
-        tree="results/{segment}/{subtype}/randomized_{n}/preopt_tree.pb.gz",
-        vcf="results/{segment}/{subtype}/randomized_{n}/msa.vcf"
+        tree="results/{segment}/{subtype}/compute_consensus_seqs/randomized_{n}/preopt_tree.pb.gz",
+        vcf="results/{segment}/{subtype}/compute_consensus_seqs/randomized_{n}/msa.vcf"
     output:
-        "results/{segment}/{subtype}/randomized_{n}/opt_tree.pb.gz"
+        "results/{segment}/{subtype}/compute_consensus_seqs/randomized_{n}/opt_tree.pb.gz"
     threads: config["threads"]
     log:
-        "logs/{segment}/{subtype}/randomized_{n}/optimize.log"
+        "logs/{segment}/{subtype}/compute_consensus_seqs/randomized_{n}/optimize.log"
     shell:
         """
         matOptimize -T {threads} -m 0.00000001 -M 5 \
@@ -197,32 +197,133 @@ rule optimize_tree:
             &> {log}
         """
 
-# Convert the optimized tree to a DAG using larch-usher
-rule tree_to_dag:
+# Compute consensus sequences from N optimized trees
+rule compute_consensus_sequences:
     input:
-        tree="results/{segment}/{subtype}/randomized_{n}/opt_tree.pb.gz",
-        ref="results/{segment}/{subtype}/curated_reference.txt",
-        vcf="results/{segment}/{subtype}/randomized_{n}/msa.vcf"
+        trees=expand("results/{{segment}}/{{subtype}}/compute_consensus_seqs/randomized_{n}/opt_tree.pb.gz",
+                    n=range(config["n_randomizations"])),
+        reference="results/{segment}/{subtype}/curated_reference.fasta"
     output:
-        "results/{segment}/{subtype}/randomized_{n}/dag.pb"
+        "results/{segment}/{subtype}/compute_consensus_seqs/consensus.fasta.xz"
+    log:
+        "logs/{segment}/{subtype}/compute_consensus_seqs/consensus.log"
+    conda:
+        "flu-syn-rates"
+    shell:
+        """
+        python scripts/compute_consensus_sequences.py \
+            --trees {input.trees} \
+            --reference {input.reference} \
+            --output {output} \
+            &> {log}
+        """
+
+# Second round: randomize consensus alignment
+rule randomize_consensus_alignment:
+    input:
+        consensus_fasta="results/{segment}/{subtype}/compute_consensus_seqs/consensus.fasta.xz"
+    output:
+        "results/{segment}/{subtype}/compute_trees_from_consensus_seqs/randomized_{n}/msa.fasta.xz"
+    params:
+        seed=lambda wildcards: int(wildcards.n)
+    log:
+        "logs/{segment}/{subtype}/compute_trees_from_consensus_seqs/randomize_{n}.log"
+    shell:
+        """
+        python scripts/randomize_alignment.py \
+            --input {input.consensus_fasta} \
+            --output {output} \
+            --seed {params.seed} \
+            &> {log}
+        """
+
+# Second round: create VCF from consensus alignment
+rule create_consensus_vcf:
+    input:
+        msa="results/{segment}/{subtype}/compute_trees_from_consensus_seqs/randomized_{n}/msa.fasta.xz"
+    output:
+        "results/{segment}/{subtype}/compute_trees_from_consensus_seqs/randomized_{n}/msa.vcf"
+    log:
+        "logs/{segment}/{subtype}/compute_trees_from_consensus_seqs/randomized_{n}/create_vcf.log"
+    shell:
+        """
+        xzcat {input.msa} \
+        | faToVcf -includeRef -includeNoAltN stdin {output} 2> {log}
+        """
+
+# Second round: create initial tree from consensus sequences
+rule create_consensus_initial_tree:
+    input:
+        vcf="results/{segment}/{subtype}/compute_trees_from_consensus_seqs/randomized_{n}/msa.vcf"
+    output:
+        tree="results/{segment}/{subtype}/compute_trees_from_consensus_seqs/randomized_{n}/preopt_tree.pb.gz",
+        empty_tree=temp("results/{segment}/{subtype}/compute_trees_from_consensus_seqs/randomized_{n}/emptyTree.nwk")
+    params:
+        outdir="results/{segment}/{subtype}/compute_trees_from_consensus_seqs/randomized_{n}"
+    threads: config["threads"]
+    log:
+        stdout="logs/{segment}/{subtype}/compute_trees_from_consensus_seqs/randomized_{n}/usher-sampled.log",
+        stderr="logs/{segment}/{subtype}/compute_trees_from_consensus_seqs/randomized_{n}/usher-sampled.stderr"
+    shell:
+        """
+        echo '()' > {output.empty_tree}
+        usher-sampled -T {threads} -A \
+            -t {output.empty_tree} \
+            -v {input.vcf} \
+            -d {params.outdir}/ \
+            -o {output.tree} \
+            --optimization_radius 0 --batch_size_per_process 5 \
+            > {log.stdout} 2> {log.stderr}
+        """
+
+# Second round: optimize consensus trees
+rule optimize_consensus_tree:
+    input:
+        tree="results/{segment}/{subtype}/compute_trees_from_consensus_seqs/randomized_{n}/preopt_tree.pb.gz",
+        vcf="results/{segment}/{subtype}/compute_trees_from_consensus_seqs/randomized_{n}/msa.vcf"
+    output:
+        "results/{segment}/{subtype}/compute_trees_from_consensus_seqs/randomized_{n}/opt_tree.pb.gz"
+    threads: config["threads"]
+    log:
+        "logs/{segment}/{subtype}/compute_trees_from_consensus_seqs/randomized_{n}/optimize.log"
+    shell:
+        """
+        matOptimize -T {threads} -m 0.00000001 -M 5 \
+            -i {input.tree} \
+            -v {input.vcf} \
+            -o {output} \
+            &> {log}
+        """
+
+# Second round: convert consensus trees to DAGs
+rule consensus_tree_to_dag:
+    input:
+        tree="results/{segment}/{subtype}/compute_trees_from_consensus_seqs/randomized_{n}/opt_tree.pb.gz",
+        ref="results/{segment}/{subtype}/curated_reference.txt",
+        vcf="results/{segment}/{subtype}/compute_trees_from_consensus_seqs/randomized_{n}/msa.vcf"
+    output:
+        "results/{segment}/{subtype}/compute_trees_from_consensus_seqs/randomized_{n}/dag.pb"
     conda:
         "larch"
     log:
-        "logs/{segment}/{subtype}/randomized_{n}/tree_to_dag.log"
+        "logs/{segment}/{subtype}/compute_trees_from_consensus_seqs/randomized_{n}/tree_to_dag.log"
     shell:
         """
         larch-usher -i {input.tree} \
             -r {input.ref} \
             -v {input.vcf} \
             -o {output} \
-            -c 0 \
+            -c 10 \
+            -s 0 \
+            --max-subtree-clade-size 2000 \
+            --trim \
             &> {log}
         """
 
-# Use larch to merge multiple DAGs into a single DAG
+# Use larch to merge multiple DAGs from consensus trees into a single DAG
 rule larch_merge:
     input:
-        dags=expand("results/{{segment}}/{{subtype}}/randomized_{n}/dag.pb",
+        dags=expand("results/{{segment}}/{{subtype}}/compute_trees_from_consensus_seqs/randomized_{n}/dag.pb",
                     n=range(config["n_randomizations"]))
     output:
         "results/{segment}/{subtype}/larch_merged_dag.pb"
@@ -292,7 +393,7 @@ rule create_newick:
 rule create_mat_protobuf:
     input:
         nh_file="results/{segment}/{subtype}/sampled_tree.nh",
-        vcf_file="results/{segment}/{subtype}/randomized_0/msa.vcf"
+        vcf_file="results/{segment}/{subtype}/compute_trees_from_consensus_seqs/randomized_0/msa.vcf"
     output:
         protobuf_name="results/{segment}/{subtype}/sampled_tree.pb.gz"
     log:
@@ -329,11 +430,24 @@ rule reroot_tree:
 
 # TODO condense trees before feeding them to taxonium
 
+# Add host group classifications to combined metadata
+rule add_host_groups:
+    input:
+        metadata="results/combined_metadata.csv"
+    output:
+        "results/combined_metadata_with_host_groups.csv"
+    log:
+        "logs/add_host_groups.log"
+    shell:
+        """
+        python scripts/add_host_groups.py {input.metadata} {output} 2> {log}
+        """
+
 # Convert the final tree to Taxonium format for visualization
 rule convert_to_taxonium:
     input:
         final_tree="results/{segment}/{subtype}/final_tree.pb.gz",
-        metadata="results/combined_metadata.csv"
+        metadata="results/combined_metadata_with_host_groups.csv"
     output:
         "results/{segment}/{subtype}/final_tree.jsonl.gz"
     log:
@@ -344,7 +458,7 @@ rule convert_to_taxonium:
             --input {input.final_tree} \
             --metadata {input.metadata} \
             --key_column isolate_id \
-            --columns isolate_name,subtype,clade,passage_history,location,host,collection_date \
+            --columns isolate_name,subtype,clade,passage_history,location,host,host_group,collection_date \
             --output {output} \
             &> {log}
         """

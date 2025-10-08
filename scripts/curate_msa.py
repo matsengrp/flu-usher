@@ -293,6 +293,12 @@ def filter_sequences(records, ambiguous_characters, max_frac_gaps, max_frac_ambi
     for record in records:
         seq_str = str(record.seq)
         
+        # Compute QC metrics on record
+        metrics = analyze_record(record, ambiguous_characters)
+
+        # Check if the first 3 or last 3 nucleotides are gaps
+        has_terminal_gaps = ('---' == seq_str[:3]) or ('---' == seq_str[-3:])
+
         # Replace ambiguous characters with N
         if ambiguous_characters:
             for char in ambiguous_characters:
@@ -323,11 +329,6 @@ def filter_sequences(records, ambiguous_characters, max_frac_gaps, max_frac_ambi
                 logger.info(f"Filtered out {record.id}: duplicate sequence")
                 continue
             seen_sequences.add(seq_str)
-        
-        metrics = analyze_record(modified_record, ambiguous_characters)
-
-        # Check if the first 3 or last 3 nucleotides are gaps
-        has_terminal_gaps = ('---' == seq_str[:3]) or ('---' == seq_str[-3:])
         
         # Filter based on gap and ambiguous nucleotide content
         if has_terminal_gaps:

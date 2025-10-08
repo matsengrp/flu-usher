@@ -28,26 +28,26 @@ input_dirs:
 
 # Segments to analyze
 segments:
-  # - "PB2"
-  # - "PB1"
-  # - "PA"
+  - "PB2"
+  - "PB1"
+  - "PA"
   - "HA"
-  # - "NP"
-  # - "NA"
-  # - "MP"
-  # - "NS"
+  - "NP"
+  - "NA"
+  - "MP"
+  - "NS"
 
 # List of HA and NA subtypes to take through the entire pipeline
 ha_subtypes:
   - "H1"
-  # - "H3"
-  # - "H5"
-  # - "H7"
-  # - "H9"
+  - "H3"
+  - "H5"
+  - "H7"
+  - "H9"
 
 na_subtypes:
-  # - "N1"
-  # - "N2"
+  - "N1"
+  - "N2"
   - "N9"
 
 # Reference accession numbers for each segment-subtype combination
@@ -87,5 +87,5 @@ n_randomizations: 10
 # Format: "SEGMENT_SUBTYPE": "new_root_node"
 # Combinations not listed here will not be rerooted
 reroot:
-  "HA_H1": "EPI_ISL_19703745"
+  "HA_H1": "EPI_ISL_19703744"
 
