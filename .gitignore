@@ -4,3 +4,4 @@ logs/
 .snakemake/
 sbatch*
 run.sbatch
+scripts/__pycache__/
