@@ -80,7 +80,7 @@ max_frac_ambig: 0.00
 max_parsimony: 20
 
 # Number of randomizations for alignment reordering
-n_randomizations: 10
+n_randomizations: 20
 
 # Tree rerooting configuration
 # Specify which segment-subtype combinations should have their trees rerooted
@@ -88,4 +88,6 @@ n_randomizations: 10
 # Combinations not listed here will not be rerooted
 reroot:
   "HA_H1": "EPI_ISL_19703744"
-
+  "HA_H3": "EPI_ISL_18852459"
+  "HA_H5": "EPI_ISL_5886"
+  "HA_H7": "EPI_ISL_10304"

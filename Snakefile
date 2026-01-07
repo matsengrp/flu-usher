@@ -124,11 +124,11 @@ rule randomize_alignment:
     input:
         curated_msa="results/{segment}/{subtype}/curated_msa.fasta.xz"
     output:
-        "results/{segment}/{subtype}/compute_consensus_seqs/randomized_{n}/msa.fasta.xz"
+        "results/{segment}/{subtype}/randomized_{n}/msa.fasta.xz"
     params:
         seed=lambda wildcards: int(wildcards.n)
     log:
-        "logs/{segment}/{subtype}/compute_consensus_seqs/randomize_{n}.log"
+        "logs/{segment}/{subtype}/randomize_{n}.log"
     shell:
         """
         python scripts/randomize_alignment.py \
@@ -141,31 +141,32 @@ rule randomize_alignment:
 # Convert the MSA to VCF format for UShER
 rule create_vcf:
     input:
-        msa="results/{segment}/{subtype}/compute_consensus_seqs/randomized_{n}/msa.fasta.xz"
+        msa="results/{segment}/{subtype}/randomized_{n}/msa.fasta.xz"
     output:
-        "results/{segment}/{subtype}/compute_consensus_seqs/randomized_{n}/msa.vcf"
+        "results/{segment}/{subtype}/randomized_{n}/msa.vcf"
     log:
-        "logs/{segment}/{subtype}/compute_consensus_seqs/randomized_{n}/create_vcf.log"
+        "logs/{segment}/{subtype}/randomized_{n}/create_vcf.log"
     shell:
         """
         xzcat {input.msa} \
-        | faToVcf -includeRef -includeNoAltN stdin {output} 2> {log}
+        | faToVcf -includeRef -ambiguousToN -includeNoAltN stdin {output} 2> {log}
         """
 
 # Create initial tree with usher-sampled
 # TODO add this arg back in? -e 5
 rule create_initial_tree:
     input:
-        vcf="results/{segment}/{subtype}/compute_consensus_seqs/randomized_{n}/msa.vcf"
+        vcf="results/{segment}/{subtype}/randomized_{n}/msa.vcf"
     output:
-        tree="results/{segment}/{subtype}/compute_consensus_seqs/randomized_{n}/preopt_tree.pb.gz",
-        empty_tree=temp("results/{segment}/{subtype}/compute_consensus_seqs/randomized_{n}/emptyTree.nwk")
+        tree="results/{segment}/{subtype}/randomized_{n}/preopt_tree.pb.gz",
+        empty_tree=temp("results/{segment}/{subtype}/randomized_{n}/emptyTree.nwk")
+    threads: 2
     params:
-        outdir="results/{segment}/{subtype}/compute_consensus_seqs/randomized_{n}"
+        outdir="results/{segment}/{subtype}/randomized_{n}"
     threads: config["threads"]
     log:
-        stdout="logs/{segment}/{subtype}/compute_consensus_seqs/randomized_{n}/usher-sampled.log",
-        stderr="logs/{segment}/{subtype}/compute_consensus_seqs/randomized_{n}/usher-sampled.stderr"
+        stdout="logs/{segment}/{subtype}/randomized_{n}/usher-sampled.log",
+        stderr="logs/{segment}/{subtype}/randomized_{n}/usher-sampled.stderr"
     shell:
         """
         echo '()' > {output.empty_tree}
@@ -181,13 +182,13 @@ rule create_initial_tree:
 # Optimize the tree with matOptimize
 rule optimize_tree:
     input:
-        tree="results/{segment}/{subtype}/compute_consensus_seqs/randomized_{n}/preopt_tree.pb.gz",
-        vcf="results/{segment}/{subtype}/compute_consensus_seqs/randomized_{n}/msa.vcf"
+        tree="results/{segment}/{subtype}/randomized_{n}/preopt_tree.pb.gz",
+        vcf="results/{segment}/{subtype}/randomized_{n}/msa.vcf"
     output:
-        "results/{segment}/{subtype}/compute_consensus_seqs/randomized_{n}/opt_tree.pb.gz"
+        "results/{segment}/{subtype}/randomized_{n}/opt_tree.pb.gz"
     threads: config["threads"]
     log:
-        "logs/{segment}/{subtype}/compute_consensus_seqs/randomized_{n}/optimize.log"
+        "logs/{segment}/{subtype}/randomized_{n}/optimize.log"
     shell:
         """
         matOptimize -T {threads} -m 0.00000001 -M 5 \
@@ -197,134 +198,34 @@ rule optimize_tree:
             &> {log}
         """
 
-# Compute consensus sequences from N optimized trees
-rule compute_consensus_sequences:
+# Convert optimized trees to DAGs
+rule tree_to_dag:
     input:
-        trees=expand("results/{{segment}}/{{subtype}}/compute_consensus_seqs/randomized_{n}/opt_tree.pb.gz",
-                    n=range(config["n_randomizations"])),
-        reference="results/{segment}/{subtype}/curated_reference.fasta"
-    output:
-        "results/{segment}/{subtype}/compute_consensus_seqs/consensus.fasta.xz"
-    log:
-        "logs/{segment}/{subtype}/compute_consensus_seqs/consensus.log"
-    conda:
-        "flu-syn-rates"
-    shell:
-        """
-        python scripts/compute_consensus_sequences.py \
-            --trees {input.trees} \
-            --reference {input.reference} \
-            --output {output} \
-            &> {log}
-        """
-
-# Second round: randomize consensus alignment
-rule randomize_consensus_alignment:
-    input:
-        consensus_fasta="results/{segment}/{subtype}/compute_consensus_seqs/consensus.fasta.xz"
-    output:
-        "results/{segment}/{subtype}/compute_trees_from_consensus_seqs/randomized_{n}/msa.fasta.xz"
-    params:
-        seed=lambda wildcards: int(wildcards.n)
-    log:
-        "logs/{segment}/{subtype}/compute_trees_from_consensus_seqs/randomize_{n}.log"
-    shell:
-        """
-        python scripts/randomize_alignment.py \
-            --input {input.consensus_fasta} \
-            --output {output} \
-            --seed {params.seed} \
-            &> {log}
-        """
-
-# Second round: create VCF from consensus alignment
-rule create_consensus_vcf:
-    input:
-        msa="results/{segment}/{subtype}/compute_trees_from_consensus_seqs/randomized_{n}/msa.fasta.xz"
-    output:
-        "results/{segment}/{subtype}/compute_trees_from_consensus_seqs/randomized_{n}/msa.vcf"
-    log:
-        "logs/{segment}/{subtype}/compute_trees_from_consensus_seqs/randomized_{n}/create_vcf.log"
-    shell:
-        """
-        xzcat {input.msa} \
-        | faToVcf -includeRef -includeNoAltN stdin {output} 2> {log}
-        """
-
-# Second round: create initial tree from consensus sequences
-rule create_consensus_initial_tree:
-    input:
-        vcf="results/{segment}/{subtype}/compute_trees_from_consensus_seqs/randomized_{n}/msa.vcf"
-    output:
-        tree="results/{segment}/{subtype}/compute_trees_from_consensus_seqs/randomized_{n}/preopt_tree.pb.gz",
-        empty_tree=temp("results/{segment}/{subtype}/compute_trees_from_consensus_seqs/randomized_{n}/emptyTree.nwk")
-    params:
-        outdir="results/{segment}/{subtype}/compute_trees_from_consensus_seqs/randomized_{n}"
-    threads: config["threads"]
-    log:
-        stdout="logs/{segment}/{subtype}/compute_trees_from_consensus_seqs/randomized_{n}/usher-sampled.log",
-        stderr="logs/{segment}/{subtype}/compute_trees_from_consensus_seqs/randomized_{n}/usher-sampled.stderr"
-    shell:
-        """
-        echo '()' > {output.empty_tree}
-        usher-sampled -T {threads} -A \
-            -t {output.empty_tree} \
-            -v {input.vcf} \
-            -d {params.outdir}/ \
-            -o {output.tree} \
-            --optimization_radius 0 --batch_size_per_process 5 \
-            > {log.stdout} 2> {log.stderr}
-        """
-
-# Second round: optimize consensus trees
-rule optimize_consensus_tree:
-    input:
-        tree="results/{segment}/{subtype}/compute_trees_from_consensus_seqs/randomized_{n}/preopt_tree.pb.gz",
-        vcf="results/{segment}/{subtype}/compute_trees_from_consensus_seqs/randomized_{n}/msa.vcf"
-    output:
-        "results/{segment}/{subtype}/compute_trees_from_consensus_seqs/randomized_{n}/opt_tree.pb.gz"
-    threads: config["threads"]
-    log:
-        "logs/{segment}/{subtype}/compute_trees_from_consensus_seqs/randomized_{n}/optimize.log"
-    shell:
-        """
-        matOptimize -T {threads} -m 0.00000001 -M 5 \
-            -i {input.tree} \
-            -v {input.vcf} \
-            -o {output} \
-            &> {log}
-        """
-
-# Second round: convert consensus trees to DAGs
-rule consensus_tree_to_dag:
-    input:
-        tree="results/{segment}/{subtype}/compute_trees_from_consensus_seqs/randomized_{n}/opt_tree.pb.gz",
+        tree="results/{segment}/{subtype}/randomized_{n}/opt_tree.pb.gz",
         ref="results/{segment}/{subtype}/curated_reference.txt",
-        vcf="results/{segment}/{subtype}/compute_trees_from_consensus_seqs/randomized_{n}/msa.vcf"
+        vcf="results/{segment}/{subtype}/randomized_{n}/msa.vcf"
     output:
-        "results/{segment}/{subtype}/compute_trees_from_consensus_seqs/randomized_{n}/dag.pb"
+        "results/{segment}/{subtype}/randomized_{n}/dag.pb"
     conda:
         "larch"
     log:
-        "logs/{segment}/{subtype}/compute_trees_from_consensus_seqs/randomized_{n}/tree_to_dag.log"
+        "logs/{segment}/{subtype}/randomized_{n}/tree_to_dag.log"
     shell:
         """
         larch-usher -i {input.tree} \
             -r {input.ref} \
             -v {input.vcf} \
             -o {output} \
-            -c 10 \
-            -s 0 \
-            --max-subtree-clade-size 2000 \
-            --trim \
+            -c 0 \
             &> {log}
         """
 
-# Use larch to merge multiple DAGs from consensus trees into a single DAG
+# Use larch to merge multiple DAGs into a single DAG
 rule larch_merge:
     input:
-        dags=expand("results/{{segment}}/{{subtype}}/compute_trees_from_consensus_seqs/randomized_{n}/dag.pb",
-                    n=range(config["n_randomizations"]))
+        dags=expand("results/{{segment}}/{{subtype}}/randomized_{n}/dag.pb",
+                    n=range(config["n_randomizations"])),
+        vcf="results/{segment}/{subtype}/randomized_0/msa.vcf"
     output:
         "results/{segment}/{subtype}/larch_merged_dag.pb"
     conda:
@@ -337,36 +238,39 @@ rule larch_merge:
         """
         larch-dagutil \
             {params.dag_args} \
+            -v {input.vcf} \
             --trim \
             -o {output} \
             &> {log}
         """
 
 # Use larch-usher to optimize the trees
-rule larch_optimize:
-    input:
-        dag="results/{segment}/{subtype}/larch_merged_dag.pb",
-    output:
-        opt_dag="results/{segment}/{subtype}/larch_optimized_dag.pb"
-    conda:
-        "larch"
-    log:
-        "logs/{segment}/{subtype}/larch_optimize.log"
-    shell:
-        """
-        larch-usher -i {input.dag} \
-            -o {output.opt_dag} \
-            -c 1 \
-            -s 0 \
-            --max-subtree-clade-size 2000 \
-            --trim \
-            &> {log}
-        """
+# rule larch_optimize:
+#     input:
+#         dag="results/{segment}/{subtype}/larch_merged_dag.pb",
+#     output:
+#         opt_dag="results/{segment}/{subtype}/larch_optimized_dag.pb"
+#     conda:
+#         "larch"
+#     threads: config["threads"]
+#     log:
+#         "logs/{segment}/{subtype}/larch_optimize.log"
+#     shell:
+#         """
+#         larch-usher -i {input.dag} \
+#             -o {output.opt_dag} \
+#             -c 1 \
+#             -s 0 \
+#             --max-subtree-clade-size 2000 \
+#             --trim \
+#             --quiet \
+#             &> {log}
+#         """
 
 # Trim the DAG to remove suboptimal trees
 rule trim_dag:
     input:
-        dag_protobuf="results/{segment}/{subtype}/larch_optimized_dag.pb"
+        dag_protobuf="results/{segment}/{subtype}/larch_merged_dag.pb"
     output:
         trimmed_dag_protobuf="results/{segment}/{subtype}/trimmed_dag.pb"
     conda:
@@ -393,7 +297,7 @@ rule create_newick:
 rule create_mat_protobuf:
     input:
         nh_file="results/{segment}/{subtype}/sampled_tree.nh",
-        vcf_file="results/{segment}/{subtype}/compute_trees_from_consensus_seqs/randomized_0/msa.vcf"
+        vcf_file="results/{segment}/{subtype}/randomized_0/msa.vcf"
     output:
         protobuf_name="results/{segment}/{subtype}/sampled_tree.pb.gz"
     log:
