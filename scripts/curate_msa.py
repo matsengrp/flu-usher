@@ -29,6 +29,10 @@ def parse_args():
                         help='Maximum fraction of gaps allowed in a sequence')
     parser.add_argument('--max_frac_ambig', type=float, default=0.01, 
                         help='Maximum fraction of ambiguous nucleotides allowed')
+    parser.add_argument('--filter_duplicates', action='store_true',
+                        help='Filter out duplicate sequences (keeping the first occurrence)')
+    parser.add_argument('--replace_gaps_with_ref', action='store_true',
+                        help='Replace gap characters (-) with reference nucleotides (first sequence)')
     return parser.parse_args()
 
 def extract_all_genes_and_cds(gff_file):
@@ -194,10 +198,10 @@ def slice_record(record, min_start, max_end):
     # Slice the sequence (adjust to 0-based indexing)
     sliced_seq = record.seq[min_start-1:max_end]
     
-    # Sanitize the sequence ID by replacing problematic characters with underscores
+    # Sanitize the sequence ID by removing problematic characters
     sanitized_id = record.id
-    for char in ['[', ']', '(', ')', ':', ';', ',', "'"]:
-        sanitized_id = sanitized_id.replace(char, '_')
+    for char in ['[', ']', '(', ')', ':', ';', ',', "'", '.']:
+        sanitized_id = sanitized_id.replace(char, '')
     
     if ' ' in sanitized_id:
         raise ValueError(record.id)
@@ -257,7 +261,7 @@ def analyze_record(record, ambiguous_characters):
         'frac_ambiguous': num_ambiguous/length,
     }
 
-def filter_sequences(records, ambiguous_characters, max_frac_gaps, max_frac_ambig, logger):
+def filter_sequences(records, ambiguous_characters, max_frac_gaps, max_frac_ambig, logger, filter_duplicates=False, replace_gaps_with_ref=False):
     """
     Filter sequences based on gap and ambiguous nucleotide content
     
@@ -267,26 +271,75 @@ def filter_sequences(records, ambiguous_characters, max_frac_gaps, max_frac_ambi
         max_frac_gaps: Maximum fraction of gaps allowed
         max_frac_ambig: Maximum fraction of ambiguous nucleotides allowed
         logger: Logger object
+        filter_duplicates: Whether to filter out duplicate sequences (keeping first occurrence)
+        replace_gaps_with_ref: Whether to replace gaps with reference nucleotides (first sequence)
     
     Returns:
         List of filtered SeqRecord objects
     """
     filtered_records = []
+    seen_sequences = set()
+    duplicate_count = 0
+    
+    # Get reference sequence if gap replacement is requested
+    reference_seq = None
+    if replace_gaps_with_ref:
+        reference_seq = str(records[0].seq)
+        # Assert that reference sequence has no gaps
+        if '-' in reference_seq:
+            raise ValueError("Reference sequence (first sequence) contains gaps")
+        logger.info(f"Using {records[0].id} as reference for gap replacement")
     
     for record in records:
+        seq_str = str(record.seq)
+        
+        # Compute QC metrics on record
         metrics = analyze_record(record, ambiguous_characters)
 
         # Check if the first 3 or last 3 nucleotides are gaps
-        seq_str = str(record.seq)
         has_terminal_gaps = ('---' == seq_str[:3]) or ('---' == seq_str[-3:])
+
+        # Replace ambiguous characters with N
+        if ambiguous_characters:
+            for char in ambiguous_characters:
+                seq_str = seq_str.replace(char, 'N')
+        
+        # Replace gaps with reference nucleotides if requested
+        if replace_gaps_with_ref:
+            seq_list = list(seq_str)
+            for i, char in enumerate(seq_list):
+                if char == '-':
+                    seq_list[i] = reference_seq[i]
+            seq_str = ''.join(seq_list)
+        
+        # Create a new record with the modified sequence
+        if ambiguous_characters or replace_gaps_with_ref:
+            modified_record = SeqRecord(
+                Seq(seq_str),
+                id=record.id,
+                description=record.description
+            )
+        else:
+            modified_record = record
+        
+        # Check for duplicate sequences if requested
+        if filter_duplicates:
+            if seq_str in seen_sequences:
+                duplicate_count += 1
+                logger.info(f"Filtered out {record.id}: duplicate sequence")
+                continue
+            seen_sequences.add(seq_str)
         
         # Filter based on gap and ambiguous nucleotide content
         if has_terminal_gaps:
             logger.info(f"Filtered out {record.id}: has gaps in first 3 or last 3 nucleotides")
-        elif metrics['frac_gaps'] < max_frac_gaps and metrics['frac_ambiguous'] < max_frac_ambig:
-            filtered_records.append(record)
+        elif metrics['frac_gaps'] <= max_frac_gaps and metrics['frac_ambiguous'] <= max_frac_ambig:
+            filtered_records.append(modified_record)
         else:
             logger.info(f"Filtered out {record.id}: gaps={metrics['frac_gaps']:.3f}, ambig={metrics['frac_ambiguous']:.3f}")
+    
+    if filter_duplicates and duplicate_count > 0:
+        logger.info(f"Filtered out {duplicate_count} duplicate sequences")
     
     return filtered_records
 
@@ -300,6 +353,7 @@ def main():
     # Define output file paths within the output directory
     output_curated_msa = os.path.join(args.output_dir, "curated_msa.fasta.xz")
     output_reference_fasta = os.path.join(args.output_dir, "curated_reference.fasta")
+    output_reference_txt = os.path.join(args.output_dir, "curated_reference.txt")
     output_reference_gff = os.path.join(args.output_dir, "curated_reference.gff")
     output_reference_gtf = os.path.join(args.output_dir, "curated_reference.gtf")
     
@@ -335,13 +389,15 @@ def main():
     ambiguous_characters = get_ambiguous_chars(sliced_records)
     logger.info(f"Identified ambiguous characters: {ambiguous_characters}")
     
-    logger.info(f"Filtering sequences (max gaps: {args.max_frac_gaps}, max ambig: {args.max_frac_ambig})")
+    logger.info(f"Filtering sequences (max gaps: {args.max_frac_gaps}, max ambig: {args.max_frac_ambig}, filter duplicates: {args.filter_duplicates}, replace gaps with ref: {args.replace_gaps_with_ref})")
     curated_records = filter_sequences(
         sliced_records, 
         ambiguous_characters, 
         args.max_frac_gaps, 
         args.max_frac_ambig, 
-        logger
+        logger,
+        args.filter_duplicates,
+        args.replace_gaps_with_ref
     )
     
     # Write the curated sequences to an output FASTA file
@@ -354,6 +410,11 @@ def main():
         logger.info(f"Writing reference sequence to {output_reference_fasta}")
         with open(output_reference_fasta, 'w') as handle:
             SeqIO.write([curated_records[0]], handle, 'fasta')
+        
+        # Write just the sequence (no header) to a text file
+        logger.info(f"Writing reference sequence (no header) to {output_reference_txt}")
+        with open(output_reference_txt, 'w') as handle:
+            handle.write(str(curated_records[0].seq))
     else:
         logger.error("No sequences passed filtering, cannot write reference sequence")
         return 1
