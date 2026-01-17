@@ -7,19 +7,28 @@ configfile: "config/config.yaml"
 rule all:
     input:
         # Trees for HA segments by subtype
-        expand("results/HA/{subtype}/final_tree.pb.gz", 
+        expand("results/HA/{subtype}/final_tree.pb.gz",
                subtype=config["ha_subtypes"]),
-        expand("results/HA/{subtype}/final_tree.jsonl.gz", 
+        expand("results/HA/{subtype}/final_tree.jsonl.gz",
+               subtype=config["ha_subtypes"]),
+        # Unaligned coding sequences for HA segments by subtype
+        expand("results/HA/{subtype}/curated_unaligned_coding_seqs.fasta.xz",
                subtype=config["ha_subtypes"]),
         # Trees for NA segments by subtype
-        expand("results/NA/{subtype}/final_tree.pb.gz", 
+        expand("results/NA/{subtype}/final_tree.pb.gz",
                subtype=config["na_subtypes"]),
-        expand("results/NA/{subtype}/final_tree.jsonl.gz", 
+        expand("results/NA/{subtype}/final_tree.jsonl.gz",
+               subtype=config["na_subtypes"]),
+        # Unaligned coding sequences for NA segments by subtype
+        expand("results/NA/{subtype}/curated_unaligned_coding_seqs.fasta.xz",
                subtype=config["na_subtypes"]),
         # Trees for other segments (all subtypes combined)
         expand("results/{segment}/all/final_tree.pb.gz",
                segment=[s for s in config["segments"] if s not in ["HA", "NA"]]),
         expand("results/{segment}/all/final_tree.jsonl.gz",
+               segment=[s for s in config["segments"] if s not in ["HA", "NA"]]),
+        # Unaligned coding sequences for other segments (all subtypes combined)
+        expand("results/{segment}/all/curated_unaligned_coding_seqs.fasta.xz",
                segment=[s for s in config["segments"] if s not in ["HA", "NA"]])
 
 # Parse GISAID data files from all input directories at once
@@ -34,7 +43,8 @@ rule parse_gisaid_data:
                expand("results/{segment}/all/raw_sequences.fasta.xz",
                      segment=[s for s in config["segments"] if s not in ["HA", "NA"]])
     params:
-        input_dirs=config["input_dirs"]
+        input_dirs=config["input_dirs"],
+        segments=" ".join(config["segments"])
     log:
         "logs/parse_gisaid_data.log"
     shell:
@@ -42,7 +52,7 @@ rule parse_gisaid_data:
         python scripts/parse_gisaid_data.py \
             --input-dirs {params.input_dirs} \
             --output-dir results \
-            --segments {config[segments]} \
+            --segments {params.segments} \
             &> {log}
         """
 
@@ -75,7 +85,8 @@ rule align_sequences:
         reference_fasta="results/{segment}/{subtype}/reference/reference.fasta",
         reference_json="results/{segment}/{subtype}/reference/pathogen.json"
     output:
-        alignment="results/{segment}/{subtype}/msa.fasta.xz"
+        alignment="results/{segment}/{subtype}/msa.fasta.xz",
+        tsv="results/{segment}/{subtype}/msa.tsv.xz"
     threads: config["threads"]
     log:
         "logs/{segment}/{subtype}/nextclade.log"
@@ -86,6 +97,7 @@ rule align_sequences:
             --include-reference \
             --jobs {threads} \
             --output-fasta {output.alignment} \
+            --output-tsv {output.tsv} \
             >& {log}
         """
 
@@ -104,7 +116,9 @@ rule curate_alignment:
         curated_ref_gff="results/{segment}/{subtype}/curated_reference.gff",
         curated_ref_gtf="results/{segment}/{subtype}/curated_reference.gtf"
     params:
-        output_dir="results/{segment}/{subtype}"
+        output_dir="results/{segment}/{subtype}",
+        max_frac_gaps=config["max_frac_gaps"],
+        max_frac_ambig=config["max_frac_ambig"]
     log:
         "logs/{segment}/{subtype}/curate.log"
     shell:
@@ -113,9 +127,32 @@ rule curate_alignment:
             --input {input.alignment} \
             --output-dir {params.output_dir} \
             --gff {input.gff} \
-            --max_frac_gaps {config[max_frac_gaps]} \
-            --max_frac_ambig {config[max_frac_ambig]} \
+            --max_frac_gaps {params.max_frac_gaps} \
+            --max_frac_ambig {params.max_frac_ambig} \
             --filter_duplicates \
+            &> {log}
+        """
+
+# Create unaligned coding sequences from curated aligned sequences
+# by removing gaps and re-inserting nucleotides that were removed during alignment
+rule create_unaligned_coding_sequences:
+    input:
+        curated_msa="results/{segment}/{subtype}/curated_msa.fasta.xz",
+        tsv="results/{segment}/{subtype}/msa.tsv.xz",
+        gff="results/{segment}/{subtype}/reference/reference.gff",
+        raw_sequences="results/{segment}/{subtype}/raw_sequences.fasta.xz"
+    output:
+        "results/{segment}/{subtype}/curated_unaligned_coding_seqs.fasta.xz"
+    log:
+        "logs/{segment}/{subtype}/create_unaligned_coding_seqs.log"
+    shell:
+        """
+        python scripts/create_unaligned_coding_seqs.py \
+            --curated-msa {input.curated_msa} \
+            --tsv {input.tsv} \
+            --gff {input.gff} \
+            --raw-sequences {input.raw_sequences} \
+            --output {output} \
             &> {log}
         """
 
@@ -160,10 +197,9 @@ rule create_initial_tree:
     output:
         tree="results/{segment}/{subtype}/randomized_{n}/preopt_tree.pb.gz",
         empty_tree=temp("results/{segment}/{subtype}/randomized_{n}/emptyTree.nwk")
-    threads: 2
     params:
         outdir="results/{segment}/{subtype}/randomized_{n}"
-    threads: config["threads"]
+    threads: 2
     log:
         stdout="logs/{segment}/{subtype}/randomized_{n}/usher-sampled.log",
         stderr="logs/{segment}/{subtype}/randomized_{n}/usher-sampled.stderr"
