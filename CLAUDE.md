@@ -26,9 +26,12 @@ snakemake -np
 snakemake --cores 12
 
 # Run for specific segment-subtype combinations
-snakemake --cores 8 results/HA/H5/opt_tree.pb.gz
-snakemake --cores 8 results/NA/N1/opt_tree.pb.gz
-snakemake --cores 8 results/PB2/all/opt_tree.pb.gz
+snakemake --cores 8 results/HA/H5/final_tree.jsonl.gz
+snakemake --cores 8 results/NA/N1/final_tree.jsonl.gz
+snakemake --cores 8 results/PB2/all/final_tree.jsonl.gz
+
+# Run for host-specific subtrees
+snakemake --cores 8 results/HA/H5/host_specific_trees/avian_tree.jsonl.gz
 ```
 
 ### Workflow Control
@@ -47,18 +50,41 @@ The pipeline was recently reorganized from a subtype-first to a segment-first st
 
 ```
 results/
+├── combined_metadata.csv                    # Aggregated metadata
+├── combined_metadata_with_host_groups.csv   # Metadata with host groups
 ├── HA/          # HA segment results by subtype
 │   ├── H1/      # Individual subtype results
+│   │   ├── raw_sequences.fasta.xz
+│   │   ├── reference/
+│   │   ├── msa.fasta.xz
+│   │   ├── curated_msa.fasta.xz
+│   │   ├── curated_unaligned_coding_seqs.fasta.xz
+│   │   ├── curated_reference.{fasta,txt,gff,gtf}
+│   │   ├── curated_root.fasta
+│   │   ├── randomized_{0,1,2,...}/  # Multiple randomizations
+│   │   │   ├── msa.fasta.xz
+│   │   │   ├── msa.vcf
+│   │   │   ├── preopt_tree.pb.gz
+│   │   │   ├── opt_tree.pb.gz
+│   │   │   └── dag.pb
+│   │   ├── larch_merged_dag.pb
+│   │   ├── trimmed_dag.pb
+│   │   ├── sampled_tree.{nh,pb.gz}
+│   │   ├── final_tree.{pb.gz,jsonl.gz}
+│   │   └── host_specific_trees/
+│   │       ├── {host_group}_samples.txt
+│   │       ├── {host_group}_tree.pb.gz
+│   │       └── {host_group}_tree.jsonl.gz
 │   ├── H3/
 │   ├── H5/
 │   ├── H7/
 │   └── H9/
 ├── NA/          # NA segment results by subtype
-│   ├── N1/
+│   ├── N1/      # Same structure as HA subtypes
 │   ├── N2/
 │   └── N9/
 └── {PB2,PB1,PA,NP,MP,NS}/  # Internal segments
-    └── all/     # All subtypes combined
+    └── all/     # All subtypes combined (same structure)
 ```
 
 ### Key Components
@@ -72,13 +98,24 @@ results/
    - Input directories for GISAID data
    - HA/NA subtypes to analyze
    - Reference sequences for each segment-subtype
-   - Quality filtering thresholds
-   - Maximum parsimony score for branch pruning (default: 20)
+   - Quality filtering thresholds (max_frac_gaps, max_frac_ambig)
+   - Number of randomizations for tree building (n_randomizations)
+   - Number of threads for parallel execution
+   - Host groups to extract for host-specific subtree analysis (host_groups_to_extract)
+   - Optional rerooting specifications for final trees (reroot)
 
 3. **scripts/**: Python scripts for specific tasks:
    - `parse_gisaid_data.py`: Parses GISAID FASTA/metadata files and organizes by segment/subtype
    - `download_ref_seq.py`: Downloads reference sequences from NCBI and creates Nextclade datasets
    - `curate_msa.py`: Filters alignments by quality metrics and extracts coding regions
+   - `create_unaligned_coding_seqs.py`: Extracts unaligned coding sequences from curated alignments
+   - `randomize_alignment.py`: Creates randomized versions of alignments for multiple tree builds
+   - `trim_dag.py`: Trims suboptimal trees from merged DAGs
+   - `convert_DAG_protobuf_to_newick_samples.py`: Samples representative trees from DAGs
+   - `create_root_samples_file.py`: Creates sample files for root sequence extraction
+   - `extract_root_sequence.py`: Infers root sequences from tree mutations
+   - `add_host_groups.py`: Classifies hosts into taxonomic groups (avian, mammalian, etc.)
+   - `create_host_samples_file.py`: Creates sample files for host-specific subtree extraction
 
 4. **notebooks/**: Jupyter notebooks for analysis and development
    - `analyze_alignments.ipynb`: Analyzes sequence statistics across segments/subtypes
@@ -89,12 +126,22 @@ results/
 1. **Parse GISAID Data** → Aggregates sequences from multiple input directories, splits by segment/subtype
 2. **Download References** → Fetches appropriate reference sequences for each segment-subtype
 3. **Align Sequences** → Uses Nextclade for codon-aware alignment
-4. **Curate Alignment** → Filters by quality (gaps < 5%, ambiguities < 1%)
-5. **Create VCF** → Converts FASTA to variant format for UShER
-6. **Build Tree** → Creates initial parsimony tree with usher-sampled
-7. **Prune Tree** → Removes leaf nodes with very long branches (>20 parsimony score)
-8. **Optimize Tree** → Refines topology with matOptimize
-9. **Create Visualization** → Generates Taxonium format for interactive exploration
+4. **Curate Alignment** → Filters by quality (gaps < 5%, ambiguities < 1%) and extracts coding regions
+5. **Create Unaligned Coding Sequences** → Extracts unaligned coding sequences from curated alignments
+6. **Randomize Alignments** → Creates multiple randomized versions of alignment (n_randomizations)
+7. **Create VCF** → Converts each randomized FASTA to variant format for UShER
+8. **Build Initial Trees** → Creates initial parsimony tree for each randomization with usher-sampled
+9. **Optimize Trees** → Refines topology for each tree with matOptimize
+10. **Convert to DAGs** → Converts each optimized tree to DAG representation (larch-usher)
+11. **Merge DAGs** → Combines all DAGs into single merged DAG (larch-dagutil)
+12. **Trim DAG** → Removes suboptimal trees from merged DAG
+13. **Sample Tree** → Samples a representative tree from trimmed DAG
+14. **Create MAT Protobuf** → Converts sampled tree to MAT protobuf format
+15. **Reroot Tree** → Optionally reroots tree at specified node (matUtils extract)
+16. **Create Root Sequence** → Infers root sequence from tree or uses reference
+17. **Add Host Groups** → Classifies hosts into taxonomic groups
+18. **Extract Host Subtrees** → Creates separate subtrees for each host group (matUtils extract)
+19. **Create Visualizations** → Generates Taxonium format for full tree and host-specific subtrees
 
 ### Input Data Requirements
 
@@ -110,3 +157,8 @@ The pipeline expects GISAID data in each input directory:
 - All logs are saved in the `logs/` directory organized by segment/subtype
 - The pipeline can process multiple influenza subtypes simultaneously
 - Reference sequences are specified in config.yaml and can be customized
+- The pipeline uses a DAG-based approach (via larch and historydag) to build consensus trees from multiple randomized alignments
+- Multiple randomizations help explore tree space and produce more robust phylogenies
+- Host-specific subtrees are automatically extracted for specified host groups (e.g., avian, mammalian)
+- Trees can be optionally rerooted using the `reroot` configuration parameter
+- The final outputs are interactive Taxonium visualization files (.jsonl.gz)

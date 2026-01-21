@@ -29,9 +29,17 @@ flu-usher/
 │   └── PB2/                 # Other segment results
 │       └── all/             # All subtypes combined
 ├── scripts/
-│   ├── parse_gisaid_data.py # Script to parse GISAID data by segment
-│   ├── curate_msa.py        # Sequence curation script
-│   └── download_ref_seq.py  # Reference sequence download script
+│   ├── parse_gisaid_data.py                        # Parse GISAID data by segment
+│   ├── download_ref_seq.py                         # Download reference sequences
+│   ├── curate_msa.py                               # Curate and filter alignments
+│   ├── create_unaligned_coding_seqs.py             # Extract unaligned coding sequences
+│   ├── randomize_alignment.py                      # Randomize alignment order
+│   ├── trim_dag.py                                 # Trim suboptimal trees from DAG
+│   ├── convert_DAG_protobuf_to_newick_samples.py   # Sample tree from DAG
+│   ├── create_root_samples_file.py                 # Create samples file for root extraction
+│   ├── extract_root_sequence.py                    # Infer root sequence from tree
+│   ├── add_host_groups.py                          # Classify hosts into groups
+│   └── create_host_samples_file.py                 # Create samples file for host extraction
 └── notebooks/               # Jupyter notebooks for development and analysis
 ```
 
@@ -55,8 +63,10 @@ flu-usher/
    - List NA subtypes to analyze (e.g., N1, N2, N9)
    - Set reference accession numbers for each segment-subtype combination
    - Adjust filtering thresholds for sequence curation (max gaps and ambiguities)
-   - Set maximum parsimony score for branch pruning (default: 20)
+   - Set number of randomizations for tree building (default: multiple randomized alignments)
    - Set desired number of threads
+   - Optionally specify host groups to extract for host-specific subtree analysis
+   - Optionally specify rerooting nodes for final trees
 
 3. **Prepare your GISAID data**
 
@@ -85,57 +95,116 @@ flu-usher/
    - `raw_sequences.fasta.xz`: Parsed sequences for this segment-subtype
    - `reference/`: Reference sequence and Nextclade dataset files
    - `msa.fasta.xz`: Multiple sequence alignment from Nextclade
+   - `msa.tsv.xz`: Nextclade alignment metadata
    - `curated_msa.fasta.xz`: Quality-filtered alignment (e.g., gaps < 5%, ambiguities < 1%)
-   - `curated_reference.fasta/gff/gtf`: Reference files matching the curated alignment
-   - `curated_msa.vcf.gz`: Variant call format file for UShER
-   - `preopt_tree.pb.gz`: Initial parsimony tree
-   - `pruned_tree.pb.gz`: Tree with long-branch leaves removed
-   - `opt_tree.pb.gz`: Optimized phylogenetic tree
-   - `opt_tree.jsonl.gz`: Interactive Taxonium visualization file
+   - `curated_unaligned_coding_seqs.fasta.xz`: Unaligned coding sequences extracted from curated sequences
+   - `curated_reference.fasta/txt/gff/gtf`: Reference files matching the curated alignment
+   - `curated_root.fasta`: Root sequence (reference or inferred from rerooting)
+   - `randomized_{n}/`: Directory for each randomized alignment (n = 0, 1, 2, ...)
+     - `msa.fasta.xz`: Randomized alignment
+     - `msa.vcf`: Variant call format file
+     - `preopt_tree.pb.gz`: Initial parsimony tree
+     - `opt_tree.pb.gz`: Optimized tree
+     - `dag.pb`: DAG representation of the tree
+   - `larch_merged_dag.pb`: Merged DAG from all randomizations
+   - `trimmed_dag.pb`: Trimmed DAG with suboptimal trees removed
+   - `sampled_tree.nh`: Newick format tree sampled from trimmed DAG
+   - `sampled_tree.pb.gz`: MAT protobuf of sampled tree
+   - `final_tree.pb.gz`: Final tree (rerooted if specified in config)
+   - `final_tree.jsonl.gz`: Interactive Taxonium visualization file
+   - `host_specific_trees/`: Host-specific subtree visualizations
+     - `{host_group}_samples.txt`: Sample list for each host group
+     - `{host_group}_tree.pb.gz`: Extracted subtree for each host group
+     - `{host_group}_tree.jsonl.gz`: Taxonium visualization for each host group
    
    **For the other segments** (e.g., `results/PB2/all/` or `results/NP/all/`):
    - Same outputs as above, but combining all influenza subtypes
-   
+
    **Global outputs**:
    - `results/combined_metadata.csv`: Aggregated metadata from all input files
+   - `results/combined_metadata_with_host_groups.csv`: Metadata with host group classifications added
 
 ## Pipeline Steps
 
-1. **Parse GISAID data** (`parse_gisaid_data.py`): 
+1. **Parse GISAID data** (`parse_gisaid_data.py`):
    - Aggregates sequences from multiple input directories
    - Splits by segment and subtype
    - Creates unified metadata file
-   
-2. **Download reference** (`download_ref_seq.py`): 
+
+2. **Download reference** (`download_ref_seq.py`):
    - Fetches appropriate reference sequence for each segment-subtype
    - Creates Nextclade dataset configuration
-   
-3. **Align sequences** (Nextclade): 
+
+3. **Align sequences** (Nextclade):
    - Performs codon-aware alignment to reference
    - Includes reference in the output alignment
-   
-4. **Curate alignment** (`curate_msa.py`): 
+   - Generates alignment metadata TSV
+
+4. **Curate alignment** (`curate_msa.py`):
    - Filters sequences by quality (gaps, ambiguities)
    - Extracts only coding regions based on GFF annotations
    - Sanitizes sequence IDs for UShER compatibility
-   
-5. **Create VCF** (faToVcf): 
-   - Converts FASTA alignment to variant format
+   - Filters duplicate sequences
+
+5. **Create unaligned coding sequences** (`create_unaligned_coding_seqs.py`):
+   - Extracts unaligned coding sequences from curated alignment
+   - Preserves original nucleotides removed during alignment
+
+6. **Randomize alignment** (`randomize_alignment.py`):
+   - Creates multiple randomized versions of the alignment (keeping reference at top)
+   - Each randomization uses a different seed for variation in tree building
+
+7. **Create VCF** (faToVcf):
+   - Converts each randomized FASTA alignment to variant format
    - Includes reference and handles ambiguous nucleotides
-   
-6. **Build initial tree** (usher-sampled): 
-   - Creates parsimony-based phylogenetic tree
-   
-7. **Prune tree** (matUtils extract): 
-   - Removes leaf nodes with very long branches (>20 parsimony score by default)
-   - These nodes can artificially arise from sequences with many gap or ambiguous characters, as these characters are filled in with the reference sequence when making the UShER tree.
-   
-8. **Optimize tree** (matOptimize): 
-   - Refines tree topology to minimize parsimony score
-   
-9. **Create visualization** (usher_to_taxonium): 
-   - Converts tree to Taxonium format
-   - Incorporates metadata for interactive exploration
+
+8. **Build initial tree** (usher-sampled):
+   - Creates parsimony-based phylogenetic tree for each randomization
+   - Uses empty starting tree and builds incrementally
+
+9. **Optimize tree** (matOptimize):
+   - Refines tree topology to minimize parsimony score for each randomization
+   - Multiple optimization rounds to improve tree quality
+
+10. **Convert to DAG** (larch-usher):
+    - Converts each optimized tree to a DAG (Directed Acyclic Graph) representation
+    - Allows for representing multiple equally parsimonious tree topologies
+
+11. **Merge DAGs** (larch-dagutil):
+    - Combines DAGs from all randomizations into a single merged DAG
+    - Trims redundant structures during merge
+
+12. **Trim DAG** (`trim_dag.py`):
+    - Removes suboptimal trees from the merged DAG
+    - Retains only the most parsimonious tree topologies
+
+13. **Sample tree from DAG** (`convert_DAG_protobuf_to_newick_samples.py`):
+    - Samples a representative tree from the trimmed DAG
+    - Outputs in Newick format
+
+14. **Create MAT protobuf** (matOptimize):
+    - Converts the sampled Newick tree to MAT protobuf format
+    - Required for downstream matUtils operations
+
+15. **Reroot tree** (matUtils extract):
+    - Reroots the tree at a specified node if configured
+    - Otherwise creates a symlink to the sampled tree
+
+16. **Create root sequence** (`extract_root_sequence.py` or symlink):
+    - If rerooted: Infers root sequence from tree mutations
+    - If not rerooted: Uses reference sequence as root
+
+17. **Add host groups** (`add_host_groups.py`):
+    - Classifies hosts into taxonomic groups (e.g., avian, mammalian)
+    - Adds host_group column to metadata
+
+18. **Extract host-specific subtrees** (matUtils extract):
+    - Creates separate subtrees for each host group
+    - Includes all samples from the specified host group plus the root
+
+19. **Create visualizations** (usher_to_taxonium):
+    - Converts final tree and host-specific subtrees to Taxonium format
+    - Incorporates metadata for interactive exploration
 
 ## Requirements
 
