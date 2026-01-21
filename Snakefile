@@ -376,27 +376,53 @@ rule reroot_tree:
                 && echo "Created symlink for {key} (no rerooting specified)" > {log}
             """)
 
-# Extract root sequence from MSA or create symlink to reference
+# Extract root sequence from tree mutations or create symlink to reference
 rule create_root_fasta:
     input:
+        tree="results/{segment}/{subtype}/sampled_tree.pb.gz",
         msa="results/{segment}/{subtype}/curated_msa.fasta.xz",
         ref="results/{segment}/{subtype}/curated_reference.fasta"
     output:
         "results/{segment}/{subtype}/curated_root.fasta"
+    params:
+        new_root=lambda wildcards: config.get("reroot", {}).get(f"{wildcards.segment}_{wildcards.subtype}", None)
     log:
         "logs/{segment}/{subtype}/create_root_fasta.log"
     run:
-        key = f"{wildcards.segment}_{wildcards.subtype}"
-        if key in config.get("reroot", {}):
-            root_name = config["reroot"][key]
+        if params.new_root:
+            # Rerooting specified - infer root sequence from tree
+            samples_file = f"results/{wildcards.segment}/{wildcards.subtype}/root_samples.txt"
+            paths_file = f"results/{wildcards.segment}/{wildcards.subtype}/root_paths.txt"
+
+            # Create samples file (reference + new root)
             shell("""
-                python scripts/extract_sequence_from_msa.py \
+                python scripts/create_root_samples_file.py \
+                    --reference {input.ref} \
+                    --new-root {params.new_root} \
+                    --output {samples_file} \
+                    &>> {log}
+            """)
+
+            # Extract mutation paths using matUtils
+            shell("""
+                matUtils extract -i {input.tree} \
+                    -s {samples_file} \
+                    -S {paths_file} \
+                    &>> {log}
+            """)
+
+            # Infer root sequence from mutations and validate against MSA
+            shell("""
+                python scripts/extract_root_sequence.py \
+                    --reference {input.ref} \
                     --msa {input.msa} \
-                    --sequence-name {root_name} \
+                    --paths {paths_file} \
+                    --new-root-name {params.new_root} \
                     --output {output} \
-                    &> {log}
+                    &>> {log}
             """)
         else:
+            # No rerooting specified, use reference
             shell("""
                 ln -sf $(basename {input.ref}) {output} \
                 && echo "Created symlink (no rerooting specified)" > {log}
