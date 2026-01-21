@@ -38,7 +38,19 @@ rule all:
                segment=[s for s in config["segments"] if s not in ["HA", "NA"]]),
         # Root sequences for other segments (all subtypes combined)
         expand("results/{segment}/all/curated_root.fasta",
-               segment=[s for s in config["segments"] if s not in ["HA", "NA"]])
+               segment=[s for s in config["segments"] if s not in ["HA", "NA"]]),
+        # Host-specific subtrees for HA segments by subtype
+        expand("results/HA/{subtype}/host_specific_trees/{host_group}_tree.pb.gz",
+               subtype=config["ha_subtypes"],
+               host_group=config["host_groups_to_extract"]),
+        # Host-specific subtrees for NA segments by subtype
+        expand("results/NA/{subtype}/host_specific_trees/{host_group}_tree.pb.gz",
+               subtype=config["na_subtypes"],
+               host_group=config["host_groups_to_extract"]),
+        # Host-specific subtrees for other segments (all subtypes combined)
+        expand("results/{segment}/all/host_specific_trees/{host_group}_tree.pb.gz",
+               segment=[s for s in config["segments"] if s not in ["HA", "NA"]],
+               host_group=config["host_groups_to_extract"])
 
 # Parse GISAID data files from all input directories at once
 rule parse_gisaid_data:
@@ -442,6 +454,45 @@ rule add_host_groups:
     shell:
         """
         python scripts/add_host_groups.py {input.metadata} {output} 2> {log}
+        """
+
+# Create samples file for host-specific subtree extraction
+rule create_host_samples_file:
+    input:
+        curated_msa="results/{segment}/{subtype}/curated_msa.fasta.xz",
+        metadata="results/combined_metadata_with_host_groups.csv",
+        root="results/{segment}/{subtype}/curated_root.fasta"
+    output:
+        "results/{segment}/{subtype}/host_specific_trees/{host_group}_samples.txt"
+    log:
+        "logs/{segment}/{subtype}/create_host_samples_{host_group}.log"
+    shell:
+        """
+        python scripts/create_host_samples_file.py \
+            --curated-msa {input.curated_msa} \
+            --metadata {input.metadata} \
+            --host-group {wildcards.host_group} \
+            --root {input.root} \
+            --output {output} \
+            &> {log}
+        """
+
+# Extract host-specific subtree using matUtils
+rule extract_host_subtree:
+    input:
+        tree="results/{segment}/{subtype}/final_tree.pb.gz",
+        samples="results/{segment}/{subtype}/host_specific_trees/{host_group}_samples.txt"
+    output:
+        "results/{segment}/{subtype}/host_specific_trees/{host_group}_tree.pb.gz"
+    log:
+        "logs/{segment}/{subtype}/extract_host_subtree_{host_group}.log"
+    shell:
+        """
+        matUtils extract \
+            -i {input.tree} \
+            -s {input.samples} \
+            -o {output} \
+            &> {log}
         """
 
 # Convert the final tree to Taxonium format for visualization
