@@ -10,11 +10,12 @@ form by:
 import argparse
 import lzma
 import logging
+import os
 import pandas as pd
 from Bio import SeqIO
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
-from utils import setup_logging, sanitize_id, get_coding_region_coords
+from utils import setup_logging, sanitize_id, extract_all_genes_and_cds, group_cds_by_gene
 
 
 def parse_args():
@@ -27,26 +28,25 @@ def parse_args():
     parser.add_argument('--tsv', required=True,
                         help='Nextclade TSV file with insertion information (xz compressed)')
     parser.add_argument('--gff', required=True,
-                        help='GFF file with gene annotation')
-    parser.add_argument('--output', required=True,
-                        help='Output file for unaligned coding sequences (xz compressed)')
+                        help='Curated GFF file with adjusted coordinates')
+    parser.add_argument('--output-dir', required=True,
+                        help='Output directory for per-gene FASTA files')
     parser.add_argument('--raw-sequences', required=True,
                         help='Original unaligned raw sequences file for validation (xz compressed)')
     return parser.parse_args()
 
 
-def parse_insertions_from_tsv(tsv_file, min_start, max_end):
+def parse_insertions_from_tsv(tsv_file):
     """
     Parse insertion information from Nextclade TSV file.
+    Parses all insertions without position filtering.
 
     Args:
         tsv_file: Path to Nextclade TSV file (xz compressed)
-        min_start: Start position of coding region (1-based, inclusive)
-        max_end: End position of coding region (1-based, inclusive)
 
     Returns:
-        dict: {sanitized_seq_id: [(adjusted_position, nucleotides), ...]}
-              Positions are adjusted for coding region and sorted in descending order
+        dict: {sanitized_seq_id: [(position, nucleotides), ...]}
+              Positions are 1-based and sorted in descending order
     """
     logger = logging.getLogger(__name__)
     logger.info(f"Parsing insertions from {tsv_file}")
@@ -56,7 +56,6 @@ def parse_insertions_from_tsv(tsv_file, min_start, max_end):
 
     insertions_dict = {}
     total_insertions = 0
-    filtered_insertions = 0
 
     # Iterate through rows
     for _, row in df.iterrows():
@@ -79,25 +78,7 @@ def parse_insertions_from_tsv(tsv_file, min_start, max_end):
                     pos_str, nucs = insertion.split(':')
                     pos = int(pos_str)
                     total_insertions += 1
-
-                    # Filter insertions based on coding region
-                    # Insertion at position X means "insert AFTER position X"
-                    # Keep if min_start <= X < max_end
-                    if pos < min_start:
-                        # Before coding region
-                        logger.debug(f"{sanitized_id}: Ignoring insertion at position {pos} (before CDS)")
-                        filtered_insertions += 1
-                        continue
-                    elif pos >= max_end:
-                        # After coding region
-                        logger.debug(f"{sanitized_id}: Ignoring insertion at position {pos} (after CDS)")
-                        filtered_insertions += 1
-                        continue
-
-                    # Adjust position for coding region slice
-                    # Original position X -> adjusted position (X - min_start + 1)
-                    adjusted_pos = pos - min_start + 1
-                    insertions.append((adjusted_pos, nucs))
+                    insertions.append((pos, nucs))
 
                 except ValueError as e:
                     logger.error(f"Could not parse insertion '{insertion}' for {seq_name}: {e}")
@@ -111,8 +92,6 @@ def parse_insertions_from_tsv(tsv_file, min_start, max_end):
                 insertions_dict[sanitized_id] = insertions
 
     logger.info(f"Parsed {total_insertions} total insertions from TSV")
-    logger.info(f"Filtered out {filtered_insertions} insertions outside coding region")
-    logger.info(f"Kept {total_insertions - filtered_insertions} insertions within coding region")
     logger.info(f"Found insertions for {len(insertions_dict)} sequences")
 
     return insertions_dict
@@ -221,80 +200,291 @@ def validate_against_raw_sequences(unaligned_records, raw_sequences_file):
     return num_validated, num_failed
 
 
+def filter_insertions_for_cds(insertions_list, cds_start, cds_end):
+    """
+    Filter insertions that fall within CDS boundaries.
+
+    Args:
+        insertions_list: List of (pos, nucs) tuples in descending order
+        cds_start: CDS start position (1-based, inclusive)
+        cds_end: CDS end position (1-based, inclusive)
+
+    Returns:
+        List of (adjusted_pos, nucs) tuples for this CDS region
+    """
+    filtered = []
+    for pos, nucs in insertions_list:
+        # Insertion at position X means "insert AFTER position X"
+        # Keep if cds_start <= X < cds_end
+        if cds_start <= pos < cds_end:
+            # Adjust position relative to CDS start
+            adjusted_pos = pos - cds_start + 1
+            filtered.append((adjusted_pos, nucs))
+
+    # Keep descending order
+    filtered.sort(reverse=True)
+    return filtered
+
+
+def extract_cds_from_aligned(aligned_seq, cds_start, cds_end):
+    """
+    Extract CDS region from aligned sequence.
+
+    Args:
+        aligned_seq: Aligned sequence string (with gaps)
+        cds_start: CDS start (1-based, inclusive, curated coordinates)
+        cds_end: CDS end (1-based, inclusive, curated coordinates)
+
+    Returns:
+        CDS subsequence (still contains gaps)
+    """
+    # Convert to 0-based indexing
+    return aligned_seq[cds_start-1:cds_end]
+
+
+def extract_gene_cds(aligned_seq, cds_fragments, insertions_list, seq_id, raw_seq, gene_name, logger):
+    """
+    Extract complete CDS for a gene (handles spliced genes).
+    Validates each fragment against raw sequence as it's extracted.
+
+    Args:
+        aligned_seq: Full aligned sequence
+        cds_fragments: List of CDS feature dicts sorted by start position
+        insertions_list: List of (pos, nucs) for this sequence
+        seq_id: Sequence identifier
+        raw_seq: Raw (unaligned) sequence for validation (REQUIRED)
+        gene_name: Gene name for logging
+        logger: Logger instance
+
+    Returns:
+        tuple: (complete_cds, all_fragments_valid)
+            - complete_cds: Unaligned CDS sequence (concatenated if spliced)
+            - all_fragments_valid: True if all fragments validated against raw sequence
+
+    Raises:
+        ValueError: If raw_seq is None
+    """
+    if raw_seq is None:
+        raise ValueError(f"{seq_id}|{gene_name}: raw_seq is required for validation")
+
+    unaligned_fragments = []
+    all_fragments_valid = True
+
+    for idx, cds in enumerate(cds_fragments):
+        # Extract aligned region
+        aligned_cds = extract_cds_from_aligned(aligned_seq, cds['start'], cds['end'])
+
+        # Filter insertions for this CDS fragment
+        cds_insertions = filter_insertions_for_cds(
+            insertions_list, cds['start'], cds['end']
+        )
+
+        # Apply insertions to aligned sequence (BEFORE gap removal)
+        if cds_insertions:
+            aligned_cds = insert_nucleotides(aligned_cds, cds_insertions)
+            logger.debug(f"{seq_id}: Applied {len(cds_insertions)} insertions to CDS fragment {idx+1}")
+
+        # Remove gaps
+        unaligned_cds = remove_gaps(aligned_cds)
+        unaligned_fragments.append(unaligned_cds)
+
+        logger.debug(f"{seq_id}: CDS fragment {idx+1} ({cds['start']}-{cds['end']}): {len(unaligned_cds)} bp")
+
+        # Validate fragment against raw sequence
+        if unaligned_cds.upper() in raw_seq.upper():
+            logger.debug(f"{seq_id}|{gene_name} fragment {idx+1}: PASS")
+        else:
+            all_fragments_valid = False
+            logger.error(
+                f"{seq_id}|{gene_name} fragment {idx+1}: FAIL - "
+                f"Fragment not found in raw sequence "
+                f"(Fragment: {len(unaligned_cds)} bp, Raw: {len(raw_seq)} bp)"
+            )
+
+    # Concatenate all fragments for spliced genes
+    complete_cds = ''.join(unaligned_fragments)
+
+    if len(unaligned_fragments) > 1:
+        logger.info(f"{seq_id}: Concatenated {len(unaligned_fragments)} CDS fragments → {len(complete_cds)} bp")
+
+    return complete_cds, all_fragments_valid
+
+
+def validate_cds(cds_seq, gene_name, seq_id, logger):
+    """
+    Validate that CDS is biologically correct:
+    1. Length is multiple of 3
+    2. Starts with ATG (start codon)
+    3. Ends with stop codon (TAA, TAG, or TGA)
+
+    Args:
+        cds_seq: CDS sequence string
+        gene_name: Gene name for logging
+        seq_id: Sequence ID for logging
+        logger: Logger instance
+
+    Returns:
+        bool: True if valid, False otherwise
+    """
+    length = len(cds_seq)
+
+    # Check length is multiple of 3
+    if length % 3 != 0:
+        remainder = length % 3
+        logger.warning(
+            f"{seq_id}|{gene_name}: CDS length {length} not divisible by 3 "
+            f"(remainder: {remainder}) - excluding from output"
+        )
+        return False
+
+    # Check minimum length (at least start codon + stop codon = 6 bp)
+    if length < 6:
+        logger.warning(
+            f"{seq_id}|{gene_name}: CDS length {length} too short "
+            f"(minimum 6 bp for start + stop codon) - excluding from output"
+        )
+        return False
+
+    # Check starts with ATG
+    cds_upper = cds_seq.upper()
+    if not cds_upper.startswith('ATG'):
+        logger.warning(
+            f"{seq_id}|{gene_name}: CDS does not start with ATG "
+            f"(starts with {cds_seq[:3]}) - excluding from output"
+        )
+        return False
+
+    # Check ends with stop codon (TAA, TAG, or TGA)
+    stop_codons = {'TAA', 'TAG', 'TGA'}
+    last_codon = cds_upper[-3:]
+    if last_codon not in stop_codons:
+        logger.warning(
+            f"{seq_id}|{gene_name}: CDS does not end with stop codon "
+            f"(ends with {last_codon}) - excluding from output"
+        )
+        return False
+
+    return True
+
+
 def main():
     args = parse_args()
     logger = setup_logging()
 
-    # Get coding region coordinates
-    min_start, max_end = get_coding_region_coords(args.gff)
+    # Load curated GFF (coordinates already adjusted)
+    logger.info(f"Reading curated GFF from {args.gff}")
+    features, (min_start, max_end) = extract_all_genes_and_cds(args.gff)
+    genes = group_cds_by_gene(features)
 
-    # Parse insertions from TSV
-    insertions_dict = parse_insertions_from_tsv(args.tsv, min_start, max_end)
+    logger.info(f"Found {len(genes)} genes: {', '.join([g['gene_name'] for g in genes.values()])}")
+    for gene_key, gene_data in genes.items():
+        gene_name = gene_data['gene_name']
+        num_cds = len(gene_data['cds_list'])
+        logger.info(f"  {gene_name}: {num_cds} CDS feature(s)")
 
-    # Load curated aligned sequences
+    # Parse insertions (no position filtering)
+    insertions_dict = parse_insertions_from_tsv(args.tsv)
+
+    # Load curated MSA
     logger.info(f"Reading curated aligned sequences from {args.curated_msa}")
     with lzma.open(args.curated_msa, 'rt') as handle:
         curated_records = list(SeqIO.parse(handle, 'fasta'))
-
     logger.info(f"Loaded {len(curated_records)} curated aligned sequences")
 
-    # Process each sequence
-    unaligned_records = []
-    sequences_with_insertions = 0
-    total_insertions_added = 0
+    # Load raw sequences for validation
+    logger.info(f"Reading raw sequences from {args.raw_sequences}")
+    raw_seqs_dict = {}
+    with lzma.open(args.raw_sequences, 'rt') as handle:
+        for raw_record in SeqIO.parse(handle, 'fasta'):
+            raw_seqs_dict[raw_record.id] = str(raw_record.seq)
+    logger.info(f"Loaded {len(raw_seqs_dict)} raw sequences")
 
+    # Prepare output data structures
+    gene_records = {gene_data['gene_name']: [] for gene_data in genes.values()}
+    validation_issues = []
+    frame_issues = []
+    num_skipped_no_raw = 0
+
+    # Process each sequence
     for record in curated_records:
         seq_id = record.id
         aligned_seq = str(record.seq)
 
-        # Check if this sequence has insertions
-        if seq_id in insertions_dict:
-            insertions = insertions_dict[seq_id]
-            sequences_with_insertions += 1
-            total_insertions_added += len(insertions)
+        # Get insertions for this sequence
+        insertions_list = insertions_dict.get(seq_id, [])
 
-            # Insert nucleotides into aligned sequence first
-            seq_with_insertions = insert_nucleotides(aligned_seq, insertions)
+        # Get raw sequence for validation - skip if not available
+        raw_seq = raw_seqs_dict.get(seq_id)
+        if raw_seq is None:
+            num_skipped_no_raw += 1
+            logger.debug(f"{seq_id}: Skipping (no raw sequence for validation)")
+            continue
 
-            # Then remove gaps
-            final_seq = remove_gaps(seq_with_insertions)
+        # Extract CDS for each gene
+        for gene_key, gene_data in genes.items():
+            gene_name = gene_data['gene_name']
+            cds_fragments = gene_data['cds_list']
 
-            logger.info(f"{seq_id}: Added {len(insertions)} insertion(s), "
-                       f"length {len(aligned_seq)} -> {len(final_seq)}")
-        else:
-            # No insertions for this sequence, just remove gaps
-            final_seq = remove_gaps(aligned_seq)
-            logger.debug(f"{seq_id}: No insertions, length {len(aligned_seq)} -> {len(final_seq)}")
+            # Extract complete CDS and validate fragments
+            cds_seq, fragments_valid = extract_gene_cds(
+                aligned_seq,
+                cds_fragments,
+                insertions_list,
+                seq_id,
+                raw_seq,
+                gene_name,
+                logger
+            )
 
-        # Create new SeqRecord with unaligned sequence
-        unaligned_record = SeqRecord(
-            Seq(final_seq),
-            id=seq_id,
-            description=seq_id
+            # Check if fragments validated
+            if not fragments_valid:
+                validation_issues.append((seq_id, gene_name))
+                logger.warning(f"{seq_id}|{gene_name}: Excluding due to fragment validation failure")
+                continue  # Skip this gene for this sequence
+
+            # Validate CDS: frame, start codon, stop codon
+            if not validate_cds(cds_seq, gene_name, seq_id, logger):
+                frame_issues.append((seq_id, gene_name, len(cds_seq)))
+                continue  # Skip this gene for this sequence
+
+            # Create SeqRecord
+            unaligned_record = SeqRecord(
+                Seq(cds_seq),
+                id=seq_id,
+                description=seq_id
+            )
+            gene_records[gene_name].append(unaligned_record)
+
+    # Write separate output file for each gene
+    os.makedirs(args.output_dir, exist_ok=True)
+
+    for gene_name, records in gene_records.items():
+        output_file = os.path.join(
+            args.output_dir,
+            f"curated_unaligned_{gene_name}.fasta.xz"
         )
-        unaligned_records.append(unaligned_record)
-
-    # Write output
-    logger.info(f"Writing {len(unaligned_records)} unaligned sequences to {args.output}")
-    with lzma.open(args.output, 'wt') as handle:
-        SeqIO.write(unaligned_records, handle, 'fasta')
+        logger.info(f"Writing {len(records)} sequences for {gene_name} to {output_file}")
+        with lzma.open(output_file, 'wt') as handle:
+            SeqIO.write(records, handle, 'fasta')
 
     # Summary statistics
-    logger.info(f"Summary:")
-    logger.info(f"  Total sequences processed: {len(unaligned_records)}")
-    logger.info(f"  Sequences with insertions: {sequences_with_insertions}")
-    logger.info(f"  Total insertions added: {total_insertions_added}")
+    logger.info("Summary:")
+    logger.info(f"  Total sequences processed: {len(curated_records)}")
+    logger.info(f"  Genes extracted: {len(genes)}")
+    for gene_name, records in gene_records.items():
+        logger.info(f"    {gene_name}: {len(records)} CDS sequences")
 
-    # Validate against raw sequences
-    logger.info(f"Running validation against raw sequences")
-    num_validated, num_failed = validate_against_raw_sequences(unaligned_records, args.raw_sequences)
+    if num_skipped_no_raw > 0:
+        logger.info(f"  {num_skipped_no_raw} sequences skipped (no raw sequence for validation)")
 
-    if num_failed > 0:
-        logger.error(f"Validation failed for {num_failed} sequences")
-        return 1
-    else:
-        logger.info(f"All sequences validated successfully")
+    if validation_issues:
+        logger.warning(f"  {len(validation_issues)} sequence-gene pairs excluded due to fragment validation failures")
 
+    if frame_issues:
+        logger.warning(f"  {len(frame_issues)} sequence-gene pairs excluded due to validation failures (frame, start codon, or stop codon)")
+
+    # Return success (validation already done inline)
+    logger.info("CDS extraction and validation complete")
     return 0
 
 

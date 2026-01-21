@@ -9,8 +9,8 @@ rule all:
         # Taxonium visualization trees for HA segments by subtype
         expand("results/HA/{subtype}/final_tree.jsonl.gz",
                subtype=config["ha_subtypes"]),
-        # Unaligned coding sequences for HA segments by subtype
-        expand("results/HA/{subtype}/curated_unaligned_coding_seqs.fasta.xz",
+        # Unaligned coding sequences for HA segments by subtype (per-gene output directories)
+        expand("results/HA/{subtype}/unaligned_coding_seqs/",
                subtype=config["ha_subtypes"]),
         # Host-specific Taxonium visualizations for HA segments by subtype
         expand("results/HA/{subtype}/host_specific_trees/{host_group}_tree.jsonl.gz",
@@ -19,8 +19,8 @@ rule all:
         # Taxonium visualization trees for NA segments by subtype
         expand("results/NA/{subtype}/final_tree.jsonl.gz",
                subtype=config["na_subtypes"]),
-        # Unaligned coding sequences for NA segments by subtype
-        expand("results/NA/{subtype}/curated_unaligned_coding_seqs.fasta.xz",
+        # Unaligned coding sequences for NA segments by subtype (per-gene output directories)
+        expand("results/NA/{subtype}/unaligned_coding_seqs/",
                subtype=config["na_subtypes"]),
         # Host-specific Taxonium visualizations for NA segments by subtype
         expand("results/NA/{subtype}/host_specific_trees/{host_group}_tree.jsonl.gz",
@@ -29,8 +29,8 @@ rule all:
         # Taxonium visualization trees for other segments (all subtypes combined)
         expand("results/{segment}/all/final_tree.jsonl.gz",
                segment=[s for s in config["segments"] if s not in ["HA", "NA"]]),
-        # Unaligned coding sequences for other segments (all subtypes combined)
-        expand("results/{segment}/all/curated_unaligned_coding_seqs.fasta.xz",
+        # Unaligned coding sequences for other segments (all subtypes combined, per-gene output directories)
+        expand("results/{segment}/all/unaligned_coding_seqs/",
                segment=[s for s in config["segments"] if s not in ["HA", "NA"]]),
         # Host-specific Taxonium visualizations for other segments (all subtypes combined)
         expand("results/{segment}/all/host_specific_trees/{host_group}_tree.jsonl.gz",
@@ -141,14 +141,15 @@ rule curate_alignment:
 
 # Create unaligned coding sequences from curated aligned sequences
 # by removing gaps and re-inserting nucleotides that were removed during alignment
+# Outputs separate FASTA files for each gene in the segment
 rule create_unaligned_coding_sequences:
     input:
         curated_msa="results/{segment}/{subtype}/curated_msa.fasta.xz",
         tsv="results/{segment}/{subtype}/msa.tsv.xz",
-        gff="results/{segment}/{subtype}/reference/reference.gff",
+        gff="results/{segment}/{subtype}/curated_reference.gff",
         raw_sequences="results/{segment}/{subtype}/raw_sequences.fasta.xz"
     output:
-        "results/{segment}/{subtype}/curated_unaligned_coding_seqs.fasta.xz"
+        directory("results/{segment}/{subtype}/unaligned_coding_seqs/")
     log:
         "logs/{segment}/{subtype}/create_unaligned_coding_seqs.log"
     shell:
@@ -158,7 +159,7 @@ rule create_unaligned_coding_sequences:
             --tsv {input.tsv} \
             --gff {input.gff} \
             --raw-sequences {input.raw_sequences} \
-            --output {output} \
+            --output-dir {output} \
             &> {log}
         """
 

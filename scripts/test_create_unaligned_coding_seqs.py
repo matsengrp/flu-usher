@@ -6,6 +6,8 @@ import unittest
 import tempfile
 import os
 import lzma
+import logging
+from io import StringIO
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
 from Bio import SeqIO
@@ -122,17 +124,18 @@ class TestInsertNucleotides(unittest.TestCase):
 
         # Insertion at position 11 (1-based, meaning "insert after position 11")
         # Position 11 is the 'A' character right after the gap region
-        insertions = [(11, "XXX")]
+        # Using GGG (doesn't match adjacent 'A' to avoid ambiguity)
+        insertions = [(11, "GGG")]
 
         # Correct workflow: Apply insertions to aligned sequence FIRST
         seq_with_insertions = insert_nucleotides(aligned_seq, insertions)
-        # Expected: "ACTC------AXXXTTGC" (insertions go after position 11 in aligned coords)
-        self.assertEqual(seq_with_insertions, "ACTC------AXXXTTGC")
+        # Expected: "ACTC------AGGGTTGC" (insertions go after position 11 in aligned coords)
+        self.assertEqual(seq_with_insertions, "ACTC------AGGGTTGC")
 
         # Then remove gaps
         final_seq = remove_gaps(seq_with_insertions)
-        # Expected: "ACTCAXXXTTGC" (12 chars: 4 + 1 + 3 + 4)
-        self.assertEqual(final_seq, "ACTCAXXXTTGC")
+        # Expected: "ACTCAGGGTTGC" (12 chars: 4 + 1 + 3 + 4)
+        self.assertEqual(final_seq, "ACTCAGGGTTGC")
 
         # Wrong workflow would be: remove gaps first (8 chars), then try to insert at
         # position 11, which is past the end or at the wrong location
@@ -199,7 +202,7 @@ class TestParseInsertionsFromTsv(unittest.TestCase):
                 xz_file.write(content)
 
             try:
-                result = parse_insertions_from_tsv(f.name, 1, 1683)
+                result = parse_insertions_from_tsv(f.name)
                 self.assertIn("EPI_ISL_123", result)
                 self.assertEqual(result["EPI_ISL_123"], [(100, "ACG")])
                 self.assertNotIn("EPI_ISL_456", result)
@@ -216,47 +219,28 @@ class TestParseInsertionsFromTsv(unittest.TestCase):
                 xz_file.write(content)
 
             try:
-                result = parse_insertions_from_tsv(f.name, 1, 1683)
+                result = parse_insertions_from_tsv(f.name)
                 self.assertIn("EPI_ISL_123", result)
                 # Should be sorted in descending order
                 self.assertEqual(result["EPI_ISL_123"], [(800, "GGG"), (500, "TTT"), (100, "ACG")])
             finally:
                 os.unlink(f.name)
 
-    def test_filter_insertions_outside_cds(self):
-        """Test filtering of insertions outside coding region"""
+    def test_all_insertions_kept(self):
+        """Test that all insertions are kept (no filtering)"""
         with tempfile.NamedTemporaryFile(mode='wb', suffix='.tsv.xz', delete=False) as f:
             content = "seqName\tinsertions\n"
-            # Position 0: before CDS (min_start=1)
-            # Position 100: inside CDS
-            # Position 2000: after CDS (max_end=1683)
-            content += "EPI_ISL_123\t0:ACG,100:TTT,2000:GGG\n"
+            # All positions should be kept (no filtering)
+            content += "EPI_ISL_123\t10:ACG,100:TTT,2000:GGG\n"
 
             with lzma.open(f.name, 'wt') as xz_file:
                 xz_file.write(content)
 
             try:
-                result = parse_insertions_from_tsv(f.name, 1, 1683)
+                result = parse_insertions_from_tsv(f.name)
                 self.assertIn("EPI_ISL_123", result)
-                # Only position 100 should be kept
-                self.assertEqual(result["EPI_ISL_123"], [(100, "TTT")])
-            finally:
-                os.unlink(f.name)
-
-    def test_adjust_positions_for_cds_slice(self):
-        """Test that positions are adjusted for CDS slice"""
-        with tempfile.NamedTemporaryFile(mode='wb', suffix='.tsv.xz', delete=False) as f:
-            content = "seqName\tinsertions\n"
-            # If min_start=50, position 100 should become (100-50+1)=51
-            content += "EPI_ISL_123\t100:ACG\n"
-
-            with lzma.open(f.name, 'wt') as xz_file:
-                xz_file.write(content)
-
-            try:
-                result = parse_insertions_from_tsv(f.name, 50, 1683)
-                self.assertIn("EPI_ISL_123", result)
-                self.assertEqual(result["EPI_ISL_123"], [(51, "ACG")])
+                # All insertions should be kept in descending order
+                self.assertEqual(result["EPI_ISL_123"], [(2000, "GGG"), (100, "TTT"), (10, "ACG")])
             finally:
                 os.unlink(f.name)
 
@@ -270,7 +254,7 @@ class TestParseInsertionsFromTsv(unittest.TestCase):
                 xz_file.write(content)
 
             try:
-                result = parse_insertions_from_tsv(f.name, 1, 1683)
+                result = parse_insertions_from_tsv(f.name)
                 # Sanitized ID should remove brackets and colon
                 self.assertIn("EPIISL_123456", result)
                 self.assertEqual(result["EPIISL_123456"], [(100, "ACG")])
@@ -337,6 +321,695 @@ class TestValidateAgainstRawSequences(unittest.TestCase):
                 self.assertEqual(num_failed, 0)
             finally:
                 os.unlink(f.name)
+
+
+# ============================================================================
+# TESTS FOR PER-GENE CDS EXTRACTION
+# ============================================================================
+#
+# These tests cover functions for extracting individual CDS per gene with
+# support for spliced genes and biological validation:
+# - group_cds_by_gene(): Group CDS features by gene/protein (in utils.py)
+# - filter_insertions_for_cds(): Filter insertions for specific CDS regions
+# - extract_cds_from_aligned(): Extract CDS from aligned sequences
+# - extract_gene_cds(): Complete gene CDS extraction with inline validation
+# - validate_cds(): CDS biological validation (frame, start codon, stop codon)
+# ============================================================================
+
+# Test data constants
+VALID_CDS_PERGENE = "ATGCGATCGTAA"  # 12 bp, starts with ATG, ends with TAA
+ALIGNED_CDS_WITH_GAPS_PERGENE = "ATG---CGATCG---TAA"  # 12 bp ungapped
+LONG_CDS_PERGENE = "ATGCGATCGAAACCGTTCGGTTGA"  # 24 bp
+LONG_ALIGNED_CDS_PERGENE = "ATG---CGATCG---AAACCG---TTCGGTTGA"  # 24 bp ungapped
+INVALID_FRAME_CDS_PERGENE = "ATGCGATCGTAAG"  # 13 bp, not divisible by 3
+NEP_FRAGMENT1_PERGENE = "ATGGATTCCAACACTGTGTCAAGCTTTCAA"  # 30 bp
+NEP_FRAGMENT2_PERGENE = "AAACCGTTCTAA"  # 12 bp, total 42 bp when concatenated
+
+
+class TestGroupCdsByGene(unittest.TestCase):
+    """Tests for group_cds_by_gene() function"""
+
+    def test_single_gene_single_cds(self):
+        """Single CDS feature for HA gene"""
+        from utils import group_cds_by_gene
+
+        features = [
+            {
+                'type': 'CDS',
+                'name': 'HA',
+                'start': 1,
+                'end': 1683,
+                'attributes': 'gene=HA;protein_id=P12345'
+            }
+        ]
+        result = group_cds_by_gene(features)
+
+        self.assertEqual(len(result), 1)
+        self.assertIn('P12345', result)
+        self.assertEqual(result['P12345']['gene_name'], 'HA')
+        self.assertEqual(len(result['P12345']['cds_list']), 1)
+
+    def test_spliced_gene_nep(self):
+        """Two CDS features with same protein_id (NEP case)"""
+        from utils import group_cds_by_gene
+
+        features = [
+            {
+                'type': 'CDS',
+                'name': 'NEP',
+                'start': 1,
+                'end': 30,
+                'attributes': 'gene=NEP;protein_id=P67890'
+            },
+            {
+                'type': 'CDS',
+                'name': 'NEP',
+                'start': 503,
+                'end': 838,
+                'attributes': 'gene=NEP;protein_id=P67890'
+            }
+        ]
+        result = group_cds_by_gene(features)
+
+        self.assertEqual(len(result), 1)
+        self.assertIn('P67890', result)
+        self.assertEqual(result['P67890']['gene_name'], 'NEP')
+        self.assertEqual(len(result['P67890']['cds_list']), 2)
+
+    def test_multiple_genes_no_splicing(self):
+        """NS1 CDS and NEP CDS fragments (different protein_ids)"""
+        from utils import group_cds_by_gene
+
+        features = [
+            {
+                'type': 'CDS',
+                'name': 'NS1',
+                'start': 1,
+                'end': 693,
+                'attributes': 'gene=NS1;protein_id=P11111'
+            },
+            {
+                'type': 'CDS',
+                'name': 'NEP',
+                'start': 1,
+                'end': 30,
+                'attributes': 'gene=NEP;protein_id=P22222'
+            },
+            {
+                'type': 'CDS',
+                'name': 'NEP',
+                'start': 503,
+                'end': 838,
+                'attributes': 'gene=NEP;protein_id=P22222'
+            }
+        ]
+        result = group_cds_by_gene(features)
+
+        self.assertEqual(len(result), 2)
+        self.assertIn('P11111', result)
+        self.assertIn('P22222', result)
+        self.assertEqual(len(result['P11111']['cds_list']), 1)
+        self.assertEqual(len(result['P22222']['cds_list']), 2)
+
+    def test_cds_sorting_by_start_position(self):
+        """CDS features provided out of order should be sorted"""
+        from utils import group_cds_by_gene
+
+        features = [
+            {
+                'type': 'CDS',
+                'name': 'NEP',
+                'start': 503,
+                'end': 838,
+                'attributes': 'gene=NEP;protein_id=P67890'
+            },
+            {
+                'type': 'CDS',
+                'name': 'NEP',
+                'start': 1,
+                'end': 30,
+                'attributes': 'gene=NEP;protein_id=P67890'
+            }
+        ]
+        result = group_cds_by_gene(features)
+
+        cds_list = result['P67890']['cds_list']
+        self.assertEqual(cds_list[0]['start'], 1)
+        self.assertEqual(cds_list[1]['start'], 503)
+
+    def test_gene_without_protein_id(self):
+        """CDS feature with gene attribute but no protein_id"""
+        from utils import group_cds_by_gene
+
+        features = [
+            {
+                'type': 'CDS',
+                'name': 'HA',
+                'start': 1,
+                'end': 1683,
+                'attributes': 'gene=HA'
+            }
+        ]
+        result = group_cds_by_gene(features)
+
+        self.assertEqual(len(result), 1)
+        # Should use gene name as key when protein_id is missing
+        self.assertIn('HA', result)
+
+    def test_mixed_protein_ids(self):
+        """Some CDS with protein_id, some without"""
+        from utils import group_cds_by_gene
+
+        features = [
+            {
+                'type': 'CDS',
+                'name': 'HA',
+                'start': 1,
+                'end': 1683,
+                'attributes': 'gene=HA;protein_id=P12345'
+            },
+            {
+                'type': 'CDS',
+                'name': 'NA',
+                'start': 1,
+                'end': 1410,
+                'attributes': 'gene=NA'
+            }
+        ]
+        result = group_cds_by_gene(features)
+
+        self.assertEqual(len(result), 2)
+        self.assertIn('P12345', result)
+        self.assertIn('NA', result)
+
+    def test_non_cds_features_ignored(self):
+        """Mix of CDS, gene, mRNA features - only CDS should be grouped"""
+        from utils import group_cds_by_gene
+
+        features = [
+            {
+                'type': 'gene',
+                'name': 'HA',
+                'start': 1,
+                'end': 1683,
+                'attributes': 'gene=HA'
+            },
+            {
+                'type': 'CDS',
+                'name': 'HA',
+                'start': 1,
+                'end': 1683,
+                'attributes': 'gene=HA;protein_id=P12345'
+            },
+            {
+                'type': 'mRNA',
+                'name': 'HA',
+                'start': 1,
+                'end': 1683,
+                'attributes': 'gene=HA'
+            }
+        ]
+        result = group_cds_by_gene(features)
+
+        self.assertEqual(len(result), 1)
+        self.assertIn('P12345', result)
+
+    def test_empty_feature_list(self):
+        """Empty list should return empty dict"""
+        from utils import group_cds_by_gene
+
+        features = []
+        result = group_cds_by_gene(features)
+
+        self.assertEqual(len(result), 0)
+        self.assertIsInstance(result, dict)
+
+
+class TestFilterInsertionsForCds(unittest.TestCase):
+    """Tests for filter_insertions_for_cds() function"""
+
+    def test_no_insertions(self):
+        """Empty insertion list should return empty list"""
+        from create_unaligned_coding_seqs import filter_insertions_for_cds
+
+        insertions = []
+        result = filter_insertions_for_cds(insertions, 50, 150)
+
+        self.assertEqual(len(result), 0)
+        self.assertIsInstance(result, list)
+
+    def test_single_codon_insertion_within_cds(self):
+        """Insertion at position 50 within CDS 1-100"""
+        from create_unaligned_coding_seqs import filter_insertions_for_cds
+
+        insertions = [(50, "AAA")]
+        result = filter_insertions_for_cds(insertions, 1, 100)
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0], (50, "AAA"))
+
+    def test_insertion_before_cds(self):
+        """Insertion before CDS start should be filtered out"""
+        from create_unaligned_coding_seqs import filter_insertions_for_cds
+
+        insertions = [(10, "GGG")]
+        result = filter_insertions_for_cds(insertions, 50, 150)
+
+        self.assertEqual(len(result), 0)
+
+    def test_insertion_after_cds(self):
+        """Insertion after CDS end should be filtered out"""
+        from create_unaligned_coding_seqs import filter_insertions_for_cds
+
+        insertions = [(200, "TTT")]
+        result = filter_insertions_for_cds(insertions, 50, 150)
+
+        self.assertEqual(len(result), 0)
+
+    def test_insertion_at_cds_start_boundary(self):
+        """Insertion at CDS start boundary should be included"""
+        from create_unaligned_coding_seqs import filter_insertions_for_cds
+
+        insertions = [(50, "CCC")]
+        result = filter_insertions_for_cds(insertions, 50, 150)
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0], (1, "CCC"))  # Adjusted to position 1
+
+    def test_insertion_at_cds_end_boundary(self):
+        """Insertion at position 149 (before end 150) should be included"""
+        from create_unaligned_coding_seqs import filter_insertions_for_cds
+
+        insertions = [(149, "GGG")]
+        result = filter_insertions_for_cds(insertions, 50, 150)
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0], (100, "GGG"))  # Adjusted position
+
+    def test_multiple_codon_insertions_mixed(self):
+        """Multiple insertions, some within CDS, some outside"""
+        from create_unaligned_coding_seqs import filter_insertions_for_cds
+
+        insertions = [(200, "AAA"), (100, "GGG"), (60, "TTT"), (10, "CCC")]
+        result = filter_insertions_for_cds(insertions, 50, 150)
+
+        self.assertEqual(len(result), 2)
+        # Should keep positions 60 and 100, adjusted and in descending order
+        self.assertEqual(result[0], (51, "GGG"))  # Position 100 adjusted
+        self.assertEqual(result[1], (11, "TTT"))  # Position 60 adjusted
+
+    def test_maintains_descending_order(self):
+        """Output should maintain descending order"""
+        from create_unaligned_coding_seqs import filter_insertions_for_cds
+
+        insertions = [(90, "AAA"), (60, "GGG"), (30, "TTT")]
+        result = filter_insertions_for_cds(insertions, 1, 100)
+
+        self.assertEqual(len(result), 3)
+        self.assertEqual(result[0][0], 90)  # Highest position first
+        self.assertEqual(result[1][0], 60)
+        self.assertEqual(result[2][0], 30)
+
+    def test_position_adjustment_calculation(self):
+        """Position adjustment should be correct (pos - start + 1)"""
+        from create_unaligned_coding_seqs import filter_insertions_for_cds
+
+        insertions = [(150, "CCC")]
+        result = filter_insertions_for_cds(insertions, 100, 200)
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0], (51, "CCC"))  # 150 - 100 + 1 = 51
+
+
+class TestExtractCdsFromAligned(unittest.TestCase):
+    """Tests for extract_cds_from_aligned() function"""
+
+    def test_extract_cds_from_middle(self):
+        """Extract CDS from middle of sequence"""
+        from create_unaligned_coding_seqs import extract_cds_from_aligned
+
+        aligned_seq = "NNNNNNATG---CGATCG---TAANNNNNN"
+        result = extract_cds_from_aligned(aligned_seq, 7, 24)
+
+        expected = "ATG---CGATCG---TAA"
+        self.assertEqual(result, expected)
+
+    def test_extract_cds_from_beginning(self):
+        """Extract CDS from beginning of sequence"""
+        from create_unaligned_coding_seqs import extract_cds_from_aligned
+
+        aligned_seq = "ATG---CGATCG---TAANNNNNN"
+        result = extract_cds_from_aligned(aligned_seq, 1, 18)
+
+        expected = "ATG---CGATCG---TAA"
+        self.assertEqual(result, expected)
+
+    def test_extract_cds_to_end(self):
+        """Extract CDS to end of sequence"""
+        from create_unaligned_coding_seqs import extract_cds_from_aligned
+
+        aligned_seq = "NNNNNNATG---CGATCG---TAA"
+        result = extract_cds_from_aligned(aligned_seq, 7, 24)
+
+        expected = "ATG---CGATCG---TAA"
+        self.assertEqual(result, expected)
+
+    def test_extract_entire_cds(self):
+        """Extract entire sequence as CDS"""
+        from create_unaligned_coding_seqs import extract_cds_from_aligned
+
+        aligned_seq = "ATG---CGATCG---TAA"
+        result = extract_cds_from_aligned(aligned_seq, 1, 19)
+
+        self.assertEqual(result, aligned_seq)
+
+    def test_extract_longer_cds_with_gaps(self):
+        """Extract longer CDS with multiple gap regions"""
+        from create_unaligned_coding_seqs import extract_cds_from_aligned
+
+        aligned_seq = "ATGCGA---TCG---AAACCG---TTCTAA"
+        result = extract_cds_from_aligned(aligned_seq, 1, 33)
+
+        self.assertEqual(result, aligned_seq)
+        # After gap removal would be 24 bp
+
+    def test_preserve_gaps_in_extraction(self):
+        """Gaps should be preserved in extracted sequence"""
+        from create_unaligned_coding_seqs import extract_cds_from_aligned
+
+        aligned_seq = "ATG------CGATCGTAA"
+        result = extract_cds_from_aligned(aligned_seq, 1, 18)
+
+        self.assertEqual(result, aligned_seq)
+        self.assertIn("------", result)
+
+    def test_zero_based_conversion(self):
+        """1-based coordinates should be converted correctly to 0-based"""
+        from create_unaligned_coding_seqs import extract_cds_from_aligned
+
+        aligned_seq = "ATGCGATCGTAA"
+        result = extract_cds_from_aligned(aligned_seq, 1, 12)
+
+        # Should extract entire sequence [0:12]
+        self.assertEqual(result, aligned_seq)
+
+
+class TestExtractGeneCds(unittest.TestCase):
+    """Tests for extract_gene_cds() function with inline validation"""
+
+    def setUp(self):
+        """Set up logger for tests"""
+        self.logger = logging.getLogger('test_logger_new')
+        self.logger.setLevel(logging.DEBUG)
+        # Add handler to capture log messages
+        self.log_capture = StringIO()
+        handler = logging.StreamHandler(self.log_capture)
+        handler.setLevel(logging.DEBUG)
+        self.logger.addHandler(handler)
+
+    def tearDown(self):
+        """Clean up logger handlers"""
+        self.logger.handlers.clear()
+
+    def test_single_cds_fragment_no_insertions_with_validation(self):
+        """Single CDS fragment with successful validation"""
+        from create_unaligned_coding_seqs import extract_gene_cds
+
+        aligned_seq = "ATG---CGATCG---TAA"
+        raw_seq = "NNNNATGCGATCGTAANNNN"  # Contains the CDS
+        cds_fragments = [{'start': 1, 'end': 19}]
+        insertions_list = []
+
+        result, valid = extract_gene_cds(
+            aligned_seq, cds_fragments, insertions_list,
+            "seq1", raw_seq, "HA", self.logger
+        )
+
+        self.assertEqual(result, VALID_CDS_PERGENE)
+        self.assertTrue(valid)
+
+    def test_single_cds_fragment_validation_failure(self):
+        """Single CDS fragment with validation failure"""
+        from create_unaligned_coding_seqs import extract_gene_cds
+
+        aligned_seq = "ATG---CGATCG---TAA"
+        raw_seq = "NNNNTTTGGGCCCAAANNNN"  # Does NOT contain the CDS
+        cds_fragments = [{'start': 1, 'end': 19}]
+        insertions_list = []
+
+        result, valid = extract_gene_cds(
+            aligned_seq, cds_fragments, insertions_list,
+            "seq1", raw_seq, "HA", self.logger
+        )
+
+        self.assertEqual(result, VALID_CDS_PERGENE)
+        self.assertFalse(valid)
+        # Check that error was logged
+        log_output = self.log_capture.getvalue()
+        self.assertIn("FAIL", log_output)
+
+    def test_spliced_gene_both_fragments_valid(self):
+        """Spliced gene with both fragments valid"""
+        from create_unaligned_coding_seqs import extract_gene_cds
+
+        # Fragment 1: positions 1-30
+        # Fragment 2: positions 503-514
+        aligned_seq = NEP_FRAGMENT1_PERGENE + ("N" * 472) + NEP_FRAGMENT2_PERGENE
+        raw_seq = NEP_FRAGMENT1_PERGENE + "NNNNN" + NEP_FRAGMENT2_PERGENE  # Contains both fragments
+        cds_fragments = [
+            {'start': 1, 'end': 30},
+            {'start': 503, 'end': 514}
+        ]
+        insertions_list = []
+
+        result, valid = extract_gene_cds(
+            aligned_seq, cds_fragments, insertions_list,
+            "seq1", raw_seq, "NEP", self.logger
+        )
+
+        expected = NEP_FRAGMENT1_PERGENE + NEP_FRAGMENT2_PERGENE
+        self.assertEqual(result, expected)
+        self.assertTrue(valid)
+
+    def test_spliced_gene_first_fragment_invalid(self):
+        """Spliced gene with first fragment validation failure"""
+        from create_unaligned_coding_seqs import extract_gene_cds
+
+        aligned_seq = NEP_FRAGMENT1_PERGENE + ("N" * 472) + NEP_FRAGMENT2_PERGENE
+        raw_seq = "NNNNN" + NEP_FRAGMENT2_PERGENE  # Missing first fragment
+        cds_fragments = [
+            {'start': 1, 'end': 30},
+            {'start': 503, 'end': 514}
+        ]
+        insertions_list = []
+
+        result, valid = extract_gene_cds(
+            aligned_seq, cds_fragments, insertions_list,
+            "seq1", raw_seq, "NEP", self.logger
+        )
+
+        self.assertFalse(valid)
+        log_output = self.log_capture.getvalue()
+        self.assertIn("fragment", log_output.lower())
+        self.assertIn("FAIL", log_output)
+
+    def test_spliced_gene_second_fragment_invalid(self):
+        """Spliced gene with second fragment validation failure"""
+        from create_unaligned_coding_seqs import extract_gene_cds
+
+        aligned_seq = NEP_FRAGMENT1_PERGENE + ("N" * 472) + NEP_FRAGMENT2_PERGENE
+        raw_seq = NEP_FRAGMENT1_PERGENE + "NNNNN"  # Missing second fragment
+        cds_fragments = [
+            {'start': 1, 'end': 30},
+            {'start': 503, 'end': 514}
+        ]
+        insertions_list = []
+
+        result, valid = extract_gene_cds(
+            aligned_seq, cds_fragments, insertions_list,
+            "seq1", raw_seq, "NEP", self.logger
+        )
+
+        self.assertFalse(valid)
+        log_output = self.log_capture.getvalue()
+        self.assertIn("fragment", log_output.lower())
+        self.assertIn("FAIL", log_output)
+
+    def test_case_insensitive_validation(self):
+        """Fragment validation should be case-insensitive"""
+        from create_unaligned_coding_seqs import extract_gene_cds
+
+        aligned_seq = "atg---cgatcg---taa"
+        raw_seq = "NNNNATGCGATCGTAANNNN"  # Uppercase
+        cds_fragments = [{'start': 1, 'end': 19}]
+        insertions_list = []
+
+        result, valid = extract_gene_cds(
+            aligned_seq, cds_fragments, insertions_list,
+            "seq1", raw_seq, "HA", self.logger
+        )
+
+        self.assertTrue(valid)
+
+    def test_codon_insertion_with_validation(self):
+        """CDS with codon insertion should validate correctly"""
+        from create_unaligned_coding_seqs import extract_gene_cds
+
+        aligned_seq = "ATG---CGATCG---TAA"
+        # After insertion at aligned position 12 (9th ungapped nucleotide 'G'):
+        # Insert AAA after position 12: ATGCGATCGAAATAA (15 bp)
+        # Using AAA to avoid ambiguity (left='G', right='T', neither matches 'A')
+        raw_seq = "NNNNATGCGATCGAAATAANNNN"
+        cds_fragments = [{'start': 1, 'end': 18}]
+        insertions_list = [(12, "AAA")]  # Insert AAA after aligned position 12
+
+        result, valid = extract_gene_cds(
+            aligned_seq, cds_fragments, insertions_list,
+            "seq1", raw_seq, "HA", self.logger
+        )
+
+        expected = "ATGCGATCGAAATAA"  # 15 bp (12 original + 3 inserted)
+        self.assertEqual(result, expected)
+        self.assertTrue(valid)
+
+    def test_raw_seq_none_raises_error(self):
+        """Function should raise ValueError if raw_seq is None"""
+        from create_unaligned_coding_seqs import extract_gene_cds
+
+        aligned_seq = "ATG---CGATCG---TAA"
+        cds_fragments = [{'start': 1, 'end': 19}]
+        insertions_list = []
+
+        with self.assertRaises(ValueError) as context:
+            extract_gene_cds(
+                aligned_seq, cds_fragments, insertions_list,
+                "seq1", None, "HA", self.logger
+            )
+
+        self.assertIn("raw_seq is required", str(context.exception))
+
+
+class TestValidateCds(unittest.TestCase):
+    """Tests for validate_cds() function"""
+
+    def setUp(self):
+        """Set up logger for tests"""
+        self.logger = logging.getLogger('test_logger_validate')
+        self.logger.setLevel(logging.DEBUG)
+        self.log_capture = StringIO()
+        handler = logging.StreamHandler(self.log_capture)
+        handler.setLevel(logging.DEBUG)
+        self.logger.addHandler(handler)
+
+    def tearDown(self):
+        """Clean up logger handlers"""
+        self.logger.handlers.clear()
+
+    def test_valid_cds_all_checks_pass(self):
+        """Valid CDS with TAA stop codon"""
+        from create_unaligned_coding_seqs import validate_cds
+
+        result = validate_cds(VALID_CDS_PERGENE, "HA", "seq1", self.logger)
+        self.assertTrue(result)
+
+    def test_valid_cds_with_tag_stop(self):
+        """Valid CDS with TAG stop codon"""
+        from create_unaligned_coding_seqs import validate_cds
+
+        cds = "ATGCGATCGTAG"
+        result = validate_cds(cds, "HA", "seq1", self.logger)
+        self.assertTrue(result)
+
+    def test_valid_cds_with_tga_stop(self):
+        """Valid CDS with TGA stop codon"""
+        from create_unaligned_coding_seqs import validate_cds
+
+        cds = "ATGCGATCGTGA"
+        result = validate_cds(cds, "HA", "seq1", self.logger)
+        self.assertTrue(result)
+
+    def test_invalid_frame_remainder_one(self):
+        """CDS with length not divisible by 3 (remainder 1)"""
+        from create_unaligned_coding_seqs import validate_cds
+
+        result = validate_cds(INVALID_FRAME_CDS_PERGENE, "HA", "seq1", self.logger)
+
+        self.assertFalse(result)
+        log_output = self.log_capture.getvalue()
+        self.assertIn("not divisible by 3", log_output)
+
+    def test_invalid_frame_remainder_two(self):
+        """CDS with length not divisible by 3 (remainder 2)"""
+        from create_unaligned_coding_seqs import validate_cds
+
+        cds = "ATGCGATCGTAAGG"  # 14 bp
+        result = validate_cds(cds, "HA", "seq1", self.logger)
+
+        self.assertFalse(result)
+        log_output = self.log_capture.getvalue()
+        self.assertIn("not divisible by 3", log_output)
+
+    def test_missing_start_codon(self):
+        """CDS without ATG start codon"""
+        from create_unaligned_coding_seqs import validate_cds
+
+        cds = "TTGCGATCGTAA"
+        result = validate_cds(cds, "HA", "seq1", self.logger)
+
+        self.assertFalse(result)
+        log_output = self.log_capture.getvalue()
+        self.assertIn("does not start with ATG", log_output)
+
+    def test_missing_stop_codon(self):
+        """CDS without proper stop codon"""
+        from create_unaligned_coding_seqs import validate_cds
+
+        cds = "ATGCGATCGTTA"  # Ends with TTA, not a stop codon
+        result = validate_cds(cds, "HA", "seq1", self.logger)
+
+        self.assertFalse(result)
+        log_output = self.log_capture.getvalue()
+        self.assertIn("does not end with stop codon", log_output)
+
+    def test_too_short_sequence(self):
+        """CDS too short (only start codon)"""
+        from create_unaligned_coding_seqs import validate_cds
+
+        cds = "ATG"
+        result = validate_cds(cds, "HA", "seq1", self.logger)
+
+        self.assertFalse(result)
+        log_output = self.log_capture.getvalue()
+        self.assertIn("too short", log_output)
+
+    def test_case_insensitive_validation(self):
+        """Validation should be case-insensitive"""
+        from create_unaligned_coding_seqs import validate_cds
+
+        cds = "atgcgatcgtaa"  # Lowercase
+        result = validate_cds(cds, "HA", "seq1", self.logger)
+        self.assertTrue(result)
+
+    def test_empty_sequence(self):
+        """Empty sequence should fail validation"""
+        from create_unaligned_coding_seqs import validate_cds
+
+        cds = ""
+        result = validate_cds(cds, "HA", "seq1", self.logger)
+
+        self.assertFalse(result)
+        log_output = self.log_capture.getvalue()
+        self.assertIn("too short", log_output)
+
+    def test_logging_contains_gene_name_and_seq_id(self):
+        """Log messages should include gene name and sequence ID"""
+        from create_unaligned_coding_seqs import validate_cds
+
+        result = validate_cds(INVALID_FRAME_CDS_PERGENE, "HA", "test_seq", self.logger)
+
+        self.assertFalse(result)
+        log_output = self.log_capture.getvalue()
+        self.assertIn("test_seq|HA", log_output)
 
 
 if __name__ == "__main__":
