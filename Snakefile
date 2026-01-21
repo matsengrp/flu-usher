@@ -14,6 +14,9 @@ rule all:
         # Unaligned coding sequences for HA segments by subtype
         expand("results/HA/{subtype}/curated_unaligned_coding_seqs.fasta.xz",
                subtype=config["ha_subtypes"]),
+        # Root sequences for HA segments by subtype
+        expand("results/HA/{subtype}/curated_root.fasta",
+               subtype=config["ha_subtypes"]),
         # Trees for NA segments by subtype
         expand("results/NA/{subtype}/final_tree.pb.gz",
                subtype=config["na_subtypes"]),
@@ -22,6 +25,9 @@ rule all:
         # Unaligned coding sequences for NA segments by subtype
         expand("results/NA/{subtype}/curated_unaligned_coding_seqs.fasta.xz",
                subtype=config["na_subtypes"]),
+        # Root sequences for NA segments by subtype
+        expand("results/NA/{subtype}/curated_root.fasta",
+               subtype=config["na_subtypes"]),
         # Trees for other segments (all subtypes combined)
         expand("results/{segment}/all/final_tree.pb.gz",
                segment=[s for s in config["segments"] if s not in ["HA", "NA"]]),
@@ -29,6 +35,9 @@ rule all:
                segment=[s for s in config["segments"] if s not in ["HA", "NA"]]),
         # Unaligned coding sequences for other segments (all subtypes combined)
         expand("results/{segment}/all/curated_unaligned_coding_seqs.fasta.xz",
+               segment=[s for s in config["segments"] if s not in ["HA", "NA"]]),
+        # Root sequences for other segments (all subtypes combined)
+        expand("results/{segment}/all/curated_root.fasta",
                segment=[s for s in config["segments"] if s not in ["HA", "NA"]])
 
 # Parse GISAID data files from all input directories at once
@@ -365,6 +374,32 @@ rule reroot_tree:
             shell("""
                 ln -sf $(basename {input}) {output} \
                 && echo "Created symlink for {key} (no rerooting specified)" > {log}
+            """)
+
+# Extract root sequence from MSA or create symlink to reference
+rule create_root_fasta:
+    input:
+        msa="results/{segment}/{subtype}/curated_msa.fasta.xz",
+        ref="results/{segment}/{subtype}/curated_reference.fasta"
+    output:
+        "results/{segment}/{subtype}/curated_root.fasta"
+    log:
+        "logs/{segment}/{subtype}/create_root_fasta.log"
+    run:
+        key = f"{wildcards.segment}_{wildcards.subtype}"
+        if key in config.get("reroot", {}):
+            root_name = config["reroot"][key]
+            shell("""
+                python scripts/extract_sequence_from_msa.py \
+                    --msa {input.msa} \
+                    --sequence-name {root_name} \
+                    --output {output} \
+                    &> {log}
+            """)
+        else:
+            shell("""
+                ln -sf $(basename {input.ref}) {output} \
+                && echo "Created symlink (no rerooting specified)" > {log}
             """)
 
 
