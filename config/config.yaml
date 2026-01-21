@@ -91,3 +91,9 @@ reroot:
   "HA_H3": "EPI_ISL_18852459"
   "HA_H5": "EPI_ISL_5886"
   "HA_H7": "EPI_ISL_10304"
+
+# Host-specific subtree extraction
+# Available groups: human, avian, swine, bovine, equine, canine, feline, marine_mammal, other_mammal, laboratory, unknown
+host_groups_to_extract:
+  - "human"
+  - "avian"

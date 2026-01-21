@@ -6,39 +6,36 @@ configfile: "config/config.yaml"
 # Define the final outputs that should be created for each segment-subtype combination
 rule all:
     input:
-        # Trees for HA segments by subtype
-        expand("results/HA/{subtype}/final_tree.pb.gz",
-               subtype=config["ha_subtypes"]),
+        # Taxonium visualization trees for HA segments by subtype
         expand("results/HA/{subtype}/final_tree.jsonl.gz",
                subtype=config["ha_subtypes"]),
         # Unaligned coding sequences for HA segments by subtype
         expand("results/HA/{subtype}/curated_unaligned_coding_seqs.fasta.xz",
                subtype=config["ha_subtypes"]),
-        # Root sequences for HA segments by subtype
-        expand("results/HA/{subtype}/curated_root.fasta",
-               subtype=config["ha_subtypes"]),
-        # Trees for NA segments by subtype
-        expand("results/NA/{subtype}/final_tree.pb.gz",
-               subtype=config["na_subtypes"]),
+        # Host-specific Taxonium visualizations for HA segments by subtype
+        expand("results/HA/{subtype}/host_specific_trees/{host_group}_tree.jsonl.gz",
+               subtype=config["ha_subtypes"],
+               host_group=config["host_groups_to_extract"]),
+        # Taxonium visualization trees for NA segments by subtype
         expand("results/NA/{subtype}/final_tree.jsonl.gz",
                subtype=config["na_subtypes"]),
         # Unaligned coding sequences for NA segments by subtype
         expand("results/NA/{subtype}/curated_unaligned_coding_seqs.fasta.xz",
                subtype=config["na_subtypes"]),
-        # Root sequences for NA segments by subtype
-        expand("results/NA/{subtype}/curated_root.fasta",
-               subtype=config["na_subtypes"]),
-        # Trees for other segments (all subtypes combined)
-        expand("results/{segment}/all/final_tree.pb.gz",
-               segment=[s for s in config["segments"] if s not in ["HA", "NA"]]),
+        # Host-specific Taxonium visualizations for NA segments by subtype
+        expand("results/NA/{subtype}/host_specific_trees/{host_group}_tree.jsonl.gz",
+               subtype=config["na_subtypes"],
+               host_group=config["host_groups_to_extract"]),
+        # Taxonium visualization trees for other segments (all subtypes combined)
         expand("results/{segment}/all/final_tree.jsonl.gz",
                segment=[s for s in config["segments"] if s not in ["HA", "NA"]]),
         # Unaligned coding sequences for other segments (all subtypes combined)
         expand("results/{segment}/all/curated_unaligned_coding_seqs.fasta.xz",
                segment=[s for s in config["segments"] if s not in ["HA", "NA"]]),
-        # Root sequences for other segments (all subtypes combined)
-        expand("results/{segment}/all/curated_root.fasta",
-               segment=[s for s in config["segments"] if s not in ["HA", "NA"]])
+        # Host-specific Taxonium visualizations for other segments (all subtypes combined)
+        expand("results/{segment}/all/host_specific_trees/{host_group}_tree.jsonl.gz",
+               segment=[s for s in config["segments"] if s not in ["HA", "NA"]],
+               host_group=config["host_groups_to_extract"])
 
 # Parse GISAID data files from all input directories at once
 rule parse_gisaid_data:
@@ -444,6 +441,45 @@ rule add_host_groups:
         python scripts/add_host_groups.py {input.metadata} {output} 2> {log}
         """
 
+# Create samples file for host-specific subtree extraction
+rule create_host_samples_file:
+    input:
+        curated_msa="results/{segment}/{subtype}/curated_msa.fasta.xz",
+        metadata="results/combined_metadata_with_host_groups.csv",
+        root="results/{segment}/{subtype}/curated_root.fasta"
+    output:
+        "results/{segment}/{subtype}/host_specific_trees/{host_group}_samples.txt"
+    log:
+        "logs/{segment}/{subtype}/create_host_samples_{host_group}.log"
+    shell:
+        """
+        python scripts/create_host_samples_file.py \
+            --curated-msa {input.curated_msa} \
+            --metadata {input.metadata} \
+            --host-group {wildcards.host_group} \
+            --root {input.root} \
+            --output {output} \
+            &> {log}
+        """
+
+# Extract host-specific subtree using matUtils
+rule extract_host_subtree:
+    input:
+        tree="results/{segment}/{subtype}/final_tree.pb.gz",
+        samples="results/{segment}/{subtype}/host_specific_trees/{host_group}_samples.txt"
+    output:
+        "results/{segment}/{subtype}/host_specific_trees/{host_group}_tree.pb.gz"
+    log:
+        "logs/{segment}/{subtype}/extract_host_subtree_{host_group}.log"
+    shell:
+        """
+        matUtils extract \
+            -i {input.tree} \
+            -s {input.samples} \
+            -o {output} \
+            &> {log}
+        """
+
 # Convert the final tree to Taxonium format for visualization
 rule convert_to_taxonium:
     input:
@@ -457,6 +493,26 @@ rule convert_to_taxonium:
         """
         usher_to_taxonium \
             --input {input.final_tree} \
+            --metadata {input.metadata} \
+            --key_column isolate_id \
+            --columns isolate_name,subtype,clade,passage_history,location,host,host_group,collection_date \
+            --output {output} \
+            &> {log}
+        """
+
+# Convert host-specific subtrees to Taxonium format for visualization
+rule convert_host_subtree_to_taxonium:
+    input:
+        tree="results/{segment}/{subtype}/host_specific_trees/{host_group}_tree.pb.gz",
+        metadata="results/combined_metadata_with_host_groups.csv"
+    output:
+        "results/{segment}/{subtype}/host_specific_trees/{host_group}_tree.jsonl.gz"
+    log:
+        "logs/{segment}/{subtype}/taxonium_host_{host_group}.log"
+    shell:
+        """
+        usher_to_taxonium \
+            --input {input.tree} \
             --metadata {input.metadata} \
             --key_column isolate_id \
             --columns isolate_name,subtype,clade,passage_history,location,host,host_group,collection_date \
