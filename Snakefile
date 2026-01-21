@@ -12,8 +12,8 @@ rule all:
         # Unaligned coding sequences for HA segments by subtype
         expand("results/HA/{subtype}/curated_unaligned_coding_seqs.fasta.xz",
                subtype=config["ha_subtypes"]),
-        # Host-specific subtrees for HA segments by subtype
-        expand("results/HA/{subtype}/host_specific_trees/{host_group}_tree.pb.gz",
+        # Host-specific Taxonium visualizations for HA segments by subtype
+        expand("results/HA/{subtype}/host_specific_trees/{host_group}_tree.jsonl.gz",
                subtype=config["ha_subtypes"],
                host_group=config["host_groups_to_extract"]),
         # Taxonium visualization trees for NA segments by subtype
@@ -22,8 +22,8 @@ rule all:
         # Unaligned coding sequences for NA segments by subtype
         expand("results/NA/{subtype}/curated_unaligned_coding_seqs.fasta.xz",
                subtype=config["na_subtypes"]),
-        # Host-specific subtrees for NA segments by subtype
-        expand("results/NA/{subtype}/host_specific_trees/{host_group}_tree.pb.gz",
+        # Host-specific Taxonium visualizations for NA segments by subtype
+        expand("results/NA/{subtype}/host_specific_trees/{host_group}_tree.jsonl.gz",
                subtype=config["na_subtypes"],
                host_group=config["host_groups_to_extract"]),
         # Taxonium visualization trees for other segments (all subtypes combined)
@@ -32,8 +32,8 @@ rule all:
         # Unaligned coding sequences for other segments (all subtypes combined)
         expand("results/{segment}/all/curated_unaligned_coding_seqs.fasta.xz",
                segment=[s for s in config["segments"] if s not in ["HA", "NA"]]),
-        # Host-specific subtrees for other segments (all subtypes combined)
-        expand("results/{segment}/all/host_specific_trees/{host_group}_tree.pb.gz",
+        # Host-specific Taxonium visualizations for other segments (all subtypes combined)
+        expand("results/{segment}/all/host_specific_trees/{host_group}_tree.jsonl.gz",
                segment=[s for s in config["segments"] if s not in ["HA", "NA"]],
                host_group=config["host_groups_to_extract"])
 
@@ -493,6 +493,26 @@ rule convert_to_taxonium:
         """
         usher_to_taxonium \
             --input {input.final_tree} \
+            --metadata {input.metadata} \
+            --key_column isolate_id \
+            --columns isolate_name,subtype,clade,passage_history,location,host,host_group,collection_date \
+            --output {output} \
+            &> {log}
+        """
+
+# Convert host-specific subtrees to Taxonium format for visualization
+rule convert_host_subtree_to_taxonium:
+    input:
+        tree="results/{segment}/{subtype}/host_specific_trees/{host_group}_tree.pb.gz",
+        metadata="results/combined_metadata_with_host_groups.csv"
+    output:
+        "results/{segment}/{subtype}/host_specific_trees/{host_group}_tree.jsonl.gz"
+    log:
+        "logs/{segment}/{subtype}/taxonium_host_{host_group}.log"
+    shell:
+        """
+        usher_to_taxonium \
+            --input {input.tree} \
             --metadata {input.metadata} \
             --key_column isolate_id \
             --columns isolate_name,subtype,clade,passage_history,location,host,host_group,collection_date \
