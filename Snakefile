@@ -6,47 +6,32 @@ configfile: "config/config.yaml"
 # Define the final outputs that should be created for each segment-subtype combination
 rule all:
     input:
-        # Trees for HA segments by subtype
-        expand("results/HA/{subtype}/final_tree.pb.gz",
-               subtype=config["ha_subtypes"]),
+        # Taxonium visualization trees for HA segments by subtype
         expand("results/HA/{subtype}/final_tree.jsonl.gz",
                subtype=config["ha_subtypes"]),
         # Unaligned coding sequences for HA segments by subtype
         expand("results/HA/{subtype}/curated_unaligned_coding_seqs.fasta.xz",
                subtype=config["ha_subtypes"]),
-        # Root sequences for HA segments by subtype
-        expand("results/HA/{subtype}/curated_root.fasta",
-               subtype=config["ha_subtypes"]),
-        # Trees for NA segments by subtype
-        expand("results/NA/{subtype}/final_tree.pb.gz",
-               subtype=config["na_subtypes"]),
+        # Host-specific subtrees for HA segments by subtype
+        expand("results/HA/{subtype}/host_specific_trees/{host_group}_tree.pb.gz",
+               subtype=config["ha_subtypes"],
+               host_group=config["host_groups_to_extract"]),
+        # Taxonium visualization trees for NA segments by subtype
         expand("results/NA/{subtype}/final_tree.jsonl.gz",
                subtype=config["na_subtypes"]),
         # Unaligned coding sequences for NA segments by subtype
         expand("results/NA/{subtype}/curated_unaligned_coding_seqs.fasta.xz",
                subtype=config["na_subtypes"]),
-        # Root sequences for NA segments by subtype
-        expand("results/NA/{subtype}/curated_root.fasta",
-               subtype=config["na_subtypes"]),
-        # Trees for other segments (all subtypes combined)
-        expand("results/{segment}/all/final_tree.pb.gz",
-               segment=[s for s in config["segments"] if s not in ["HA", "NA"]]),
+        # Host-specific subtrees for NA segments by subtype
+        expand("results/NA/{subtype}/host_specific_trees/{host_group}_tree.pb.gz",
+               subtype=config["na_subtypes"],
+               host_group=config["host_groups_to_extract"]),
+        # Taxonium visualization trees for other segments (all subtypes combined)
         expand("results/{segment}/all/final_tree.jsonl.gz",
                segment=[s for s in config["segments"] if s not in ["HA", "NA"]]),
         # Unaligned coding sequences for other segments (all subtypes combined)
         expand("results/{segment}/all/curated_unaligned_coding_seqs.fasta.xz",
                segment=[s for s in config["segments"] if s not in ["HA", "NA"]]),
-        # Root sequences for other segments (all subtypes combined)
-        expand("results/{segment}/all/curated_root.fasta",
-               segment=[s for s in config["segments"] if s not in ["HA", "NA"]]),
-        # Host-specific subtrees for HA segments by subtype
-        expand("results/HA/{subtype}/host_specific_trees/{host_group}_tree.pb.gz",
-               subtype=config["ha_subtypes"],
-               host_group=config["host_groups_to_extract"]),
-        # Host-specific subtrees for NA segments by subtype
-        expand("results/NA/{subtype}/host_specific_trees/{host_group}_tree.pb.gz",
-               subtype=config["na_subtypes"],
-               host_group=config["host_groups_to_extract"]),
         # Host-specific subtrees for other segments (all subtypes combined)
         expand("results/{segment}/all/host_specific_trees/{host_group}_tree.pb.gz",
                segment=[s for s in config["segments"] if s not in ["HA", "NA"]],
