@@ -5,49 +5,49 @@ threads: 12
 
 # Input directories containing GISAID data
 input_dirs:
-  # - "data/H1N1"
-  # - "data/H3N2"
-  # - "data/H5N1"
+  - "data/H1N1"
+  - "data/H3N2"
+  - "data/H5N1"
   - "data/H7N9"
-  # - "data/H9N2"
-  # - "data/H1NX"
-  # - "data/H2NX"
-  # - "data/H3NX"
-  # - "data/H4NX"
-  # - "data/H5NX"
-  # - "data/H6NX"
+  - "data/H9N2"
+  - "data/H1NX"
+  - "data/H2NX"
+  - "data/H3NX"
+  - "data/H4NX"
+  - "data/H5NX"
+  - "data/H6NX"
   - "data/H7NX"
-  # - "data/H8NX"
-  # - "data/H9NX"
-  # - "data/H10NX"
-  # - "data/H11NX"
-  # - "data/H12NX"
-  # - "data/H13NX"
-  # - "data/H14NX"
-  # - "data/H15NX"
+  - "data/H8NX"
+  - "data/H9NX"
+  - "data/H10NX"
+  - "data/H11NX"
+  - "data/H12NX"
+  - "data/H13NX"
+  - "data/H14NX"
+  - "data/H15NX"
 
 # Segments to analyze
 segments:
-  # - "PB2"
-  # - "PB1"
-  # - "PA"
+  - "PB2"
+  - "PB1"
+  - "PA"
   - "HA"
-  # - "NP"
+  - "NP"
   - "NA"
-  # - "MP"
-  # - "NS"
+  - "MP"
+  - "NS"
 
 # List of HA and NA subtypes to take through the entire pipeline
 ha_subtypes:
-  # - "H1"
-  # - "H3"
-  # - "H5"
+  - "H1"
+  - "H3"
+  - "H5"
   - "H7"
-  # - "H9"
+  - "H9"
 
 na_subtypes:
-  # - "N1"
-  # - "N2"
+  - "N1"
+  - "N2"
   - "N9"
 
 # Reference accession numbers for each segment-subtype combination
@@ -80,7 +80,7 @@ max_frac_ambig: 0.00
 max_parsimony: 20
 
 # Number of randomizations for alignment reordering
-n_randomizations: 2
+n_randomizations: 10
 
 # Tree rerooting configuration
 # Specify which segment-subtype combinations should have their trees rerooted
