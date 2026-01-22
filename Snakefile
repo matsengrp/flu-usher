@@ -146,7 +146,7 @@ rule create_unaligned_coding_sequences:
     input:
         curated_msa="results/{segment}/{subtype}/curated_msa.fasta.xz",
         tsv="results/{segment}/{subtype}/msa.tsv.xz",
-        gff="results/{segment}/{subtype}/curated_reference.gff",
+        gff="results/{segment}/{subtype}/reference/reference.gff",  # Use ORIGINAL GFF, not curated
         raw_sequences="results/{segment}/{subtype}/raw_sequences.fasta.xz"
     output:
         directory("results/{segment}/{subtype}/unaligned_coding_seqs/")

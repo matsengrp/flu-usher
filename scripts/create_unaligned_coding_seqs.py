@@ -28,7 +28,7 @@ def parse_args():
     parser.add_argument('--tsv', required=True,
                         help='Nextclade TSV file with insertion information (xz compressed)')
     parser.add_argument('--gff', required=True,
-                        help='Curated GFF file with adjusted coordinates')
+                        help='Original GFF file with reference coordinates (NOT curated)')
     parser.add_argument('--output-dir', required=True,
                         help='Output directory for per-gene FASTA files')
     parser.add_argument('--raw-sequences', required=True,
@@ -200,60 +200,68 @@ def validate_against_raw_sequences(unaligned_records, raw_sequences_file):
     return num_validated, num_failed
 
 
-def filter_insertions_for_cds(insertions_list, cds_start, cds_end):
+def filter_insertions_for_cds(insertions_list, cds_start_original, cds_end_original, offset):
     """
-    Filter insertions that fall within CDS boundaries.
+    Filter insertions that fall within CDS boundaries and transform to curated coordinates.
 
     Args:
-        insertions_list: List of (pos, nucs) tuples in descending order
-        cds_start: CDS start position (1-based, inclusive)
-        cds_end: CDS end position (1-based, inclusive)
+        insertions_list: List of (pos, nucs) tuples in descending order (original reference coords)
+        cds_start_original: CDS start position in original reference (1-based, inclusive)
+        cds_end_original: CDS end position in original reference (1-based, inclusive)
+        offset: Offset to transform from original to curated coordinates (min_start - 1)
 
     Returns:
-        List of (adjusted_pos, nucs) tuples for this CDS region
+        List of (adjusted_pos, nucs) tuples in curated coordinate space
     """
     filtered = []
     for pos, nucs in insertions_list:
         # Insertion at position X means "insert AFTER position X"
-        # Keep if cds_start <= X < cds_end
-        if cds_start <= pos < cds_end:
-            # Adjust position relative to CDS start
-            adjusted_pos = pos - cds_start + 1
-            filtered.append((adjusted_pos, nucs))
+        # Keep if cds_start_original <= X < cds_end_original (in original coords)
+        if cds_start_original <= pos < cds_end_original:
+            # Transform to curated coordinate space
+            # Curated position = original position - offset
+            curated_pos = pos - offset
+            filtered.append((curated_pos, nucs))
 
     # Keep descending order
     filtered.sort(reverse=True)
     return filtered
 
 
-def extract_cds_from_aligned(aligned_seq, cds_start, cds_end):
+def extract_cds_from_aligned(aligned_seq, cds_start_original, cds_end_original, offset):
     """
-    Extract CDS region from aligned sequence.
+    Extract CDS region from aligned sequence (curated MSA).
 
     Args:
-        aligned_seq: Aligned sequence string (with gaps)
-        cds_start: CDS start (1-based, inclusive, curated coordinates)
-        cds_end: CDS end (1-based, inclusive, curated coordinates)
+        aligned_seq: Aligned sequence string (with gaps) from curated MSA
+        cds_start_original: CDS start in original reference coordinates (1-based, inclusive)
+        cds_end_original: CDS end in original reference coordinates (1-based, inclusive)
+        offset: Offset to transform from original to curated coordinates (min_start - 1)
 
     Returns:
         CDS subsequence (still contains gaps)
     """
-    # Convert to 0-based indexing
-    return aligned_seq[cds_start-1:cds_end]
+    # Transform original coordinates to curated coordinate space
+    cds_start_curated = cds_start_original - offset
+    cds_end_curated = cds_end_original - offset
+
+    # Convert to 0-based indexing for slicing
+    return aligned_seq[cds_start_curated-1:cds_end_curated]
 
 
-def extract_gene_cds(aligned_seq, cds_fragments, insertions_list, seq_id, raw_seq, gene_name, logger):
+def extract_gene_cds(aligned_seq, cds_fragments, insertions_list, seq_id, raw_seq, gene_name, offset, logger):
     """
     Extract complete CDS for a gene (handles spliced genes).
     Validates each fragment against raw sequence as it's extracted.
 
     Args:
-        aligned_seq: Full aligned sequence
-        cds_fragments: List of CDS feature dicts sorted by start position
-        insertions_list: List of (pos, nucs) for this sequence
+        aligned_seq: Full aligned sequence from curated MSA
+        cds_fragments: List of CDS feature dicts sorted by start position (original coords)
+        insertions_list: List of (pos, nucs) for this sequence (original coords)
         seq_id: Sequence identifier
         raw_seq: Raw (unaligned) sequence for validation (REQUIRED)
         gene_name: Gene name for logging
+        offset: Offset to transform from original to curated coordinates (min_start - 1)
         logger: Logger instance
 
     Returns:
@@ -271,12 +279,12 @@ def extract_gene_cds(aligned_seq, cds_fragments, insertions_list, seq_id, raw_se
     all_fragments_valid = True
 
     for idx, cds in enumerate(cds_fragments):
-        # Extract aligned region
-        aligned_cds = extract_cds_from_aligned(aligned_seq, cds['start'], cds['end'])
+        # Extract aligned region (transform from original to curated coords)
+        aligned_cds = extract_cds_from_aligned(aligned_seq, cds['start'], cds['end'], offset)
 
-        # Filter insertions for this CDS fragment
+        # Filter insertions for this CDS fragment (transform coords)
         cds_insertions = filter_insertions_for_cds(
-            insertions_list, cds['start'], cds['end']
+            insertions_list, cds['start'], cds['end'], offset
         )
 
         # Apply insertions to aligned sequence (BEFORE gap removal)
@@ -288,7 +296,7 @@ def extract_gene_cds(aligned_seq, cds_fragments, insertions_list, seq_id, raw_se
         unaligned_cds = remove_gaps(aligned_cds)
         unaligned_fragments.append(unaligned_cds)
 
-        logger.debug(f"{seq_id}: CDS fragment {idx+1} ({cds['start']}-{cds['end']}): {len(unaligned_cds)} bp")
+        logger.debug(f"{seq_id}: CDS fragment {idx+1} ({cds['start']}-{cds['end']} original coords): {len(unaligned_cds)} bp")
 
         # Validate fragment against raw sequence
         if unaligned_cds.upper() in raw_seq.upper():
@@ -371,10 +379,15 @@ def main():
     args = parse_args()
     logger = setup_logging()
 
-    # Load curated GFF (coordinates already adjusted)
-    logger.info(f"Reading curated GFF from {args.gff}")
+    # Load original GFF (with reference coordinates)
+    logger.info(f"Reading original GFF from {args.gff}")
     features, (min_start, max_end) = extract_all_genes_and_cds(args.gff)
     genes = group_cds_by_gene(features)
+
+    # Calculate offset for coordinate transformation
+    # Curated MSA starts at position 1, but original reference starts at min_start
+    offset = min_start - 1
+    logger.info(f"Coordinate offset: {offset} (min_start={min_start}, max_end={max_end})")
 
     logger.info(f"Found {len(genes)} genes: {', '.join([g['gene_name'] for g in genes.values()])}")
     for gene_key, gene_data in genes.items():
@@ -382,7 +395,7 @@ def main():
         num_cds = len(gene_data['cds_list'])
         logger.info(f"  {gene_name}: {num_cds} CDS feature(s)")
 
-    # Parse insertions (no position filtering)
+    # Parse insertions (in original reference coordinates)
     insertions_dict = parse_insertions_from_tsv(args.tsv)
 
     # Load curated MSA
@@ -410,7 +423,7 @@ def main():
         seq_id = record.id
         aligned_seq = str(record.seq)
 
-        # Get insertions for this sequence
+        # Get insertions for this sequence (in original reference coordinates)
         insertions_list = insertions_dict.get(seq_id, [])
 
         # Get raw sequence for validation - skip if not available
@@ -433,6 +446,7 @@ def main():
                 seq_id,
                 raw_seq,
                 gene_name,
+                offset,
                 logger
             )
 

@@ -553,7 +553,8 @@ class TestFilterInsertionsForCds(unittest.TestCase):
         from create_unaligned_coding_seqs import filter_insertions_for_cds
 
         insertions = []
-        result = filter_insertions_for_cds(insertions, 50, 150)
+        offset = 0  # No offset for this test
+        result = filter_insertions_for_cds(insertions, 50, 150, offset)
 
         self.assertEqual(len(result), 0)
         self.assertIsInstance(result, list)
@@ -563,7 +564,8 @@ class TestFilterInsertionsForCds(unittest.TestCase):
         from create_unaligned_coding_seqs import filter_insertions_for_cds
 
         insertions = [(50, "AAA")]
-        result = filter_insertions_for_cds(insertions, 1, 100)
+        offset = 0  # Original coords = curated coords
+        result = filter_insertions_for_cds(insertions, 1, 100, offset)
 
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0], (50, "AAA"))
@@ -573,7 +575,8 @@ class TestFilterInsertionsForCds(unittest.TestCase):
         from create_unaligned_coding_seqs import filter_insertions_for_cds
 
         insertions = [(10, "GGG")]
-        result = filter_insertions_for_cds(insertions, 50, 150)
+        offset = 0
+        result = filter_insertions_for_cds(insertions, 50, 150, offset)
 
         self.assertEqual(len(result), 0)
 
@@ -582,7 +585,8 @@ class TestFilterInsertionsForCds(unittest.TestCase):
         from create_unaligned_coding_seqs import filter_insertions_for_cds
 
         insertions = [(200, "TTT")]
-        result = filter_insertions_for_cds(insertions, 50, 150)
+        offset = 0
+        result = filter_insertions_for_cds(insertions, 50, 150, offset)
 
         self.assertEqual(len(result), 0)
 
@@ -591,39 +595,43 @@ class TestFilterInsertionsForCds(unittest.TestCase):
         from create_unaligned_coding_seqs import filter_insertions_for_cds
 
         insertions = [(50, "CCC")]
-        result = filter_insertions_for_cds(insertions, 50, 150)
+        offset = 49  # offset = min_start - 1 = 50 - 1 = 49
+        result = filter_insertions_for_cds(insertions, 50, 150, offset)
 
         self.assertEqual(len(result), 1)
-        self.assertEqual(result[0], (1, "CCC"))  # Adjusted to position 1
+        self.assertEqual(result[0], (1, "CCC"))  # 50 - 49 = 1 (curated position)
 
     def test_insertion_at_cds_end_boundary(self):
         """Insertion at position 149 (before end 150) should be included"""
         from create_unaligned_coding_seqs import filter_insertions_for_cds
 
         insertions = [(149, "GGG")]
-        result = filter_insertions_for_cds(insertions, 50, 150)
+        offset = 49  # offset = 50 - 1 = 49
+        result = filter_insertions_for_cds(insertions, 50, 150, offset)
 
         self.assertEqual(len(result), 1)
-        self.assertEqual(result[0], (100, "GGG"))  # Adjusted position
+        self.assertEqual(result[0], (100, "GGG"))  # 149 - 49 = 100 (curated position)
 
     def test_multiple_codon_insertions_mixed(self):
         """Multiple insertions, some within CDS, some outside"""
         from create_unaligned_coding_seqs import filter_insertions_for_cds
 
         insertions = [(200, "AAA"), (100, "GGG"), (60, "TTT"), (10, "CCC")]
-        result = filter_insertions_for_cds(insertions, 50, 150)
+        offset = 49  # offset = 50 - 1 = 49
+        result = filter_insertions_for_cds(insertions, 50, 150, offset)
 
         self.assertEqual(len(result), 2)
-        # Should keep positions 60 and 100, adjusted and in descending order
-        self.assertEqual(result[0], (51, "GGG"))  # Position 100 adjusted
-        self.assertEqual(result[1], (11, "TTT"))  # Position 60 adjusted
+        # Should keep positions 60 and 100, transformed to curated space and in descending order
+        self.assertEqual(result[0], (51, "GGG"))  # 100 - 49 = 51
+        self.assertEqual(result[1], (11, "TTT"))  # 60 - 49 = 11
 
     def test_maintains_descending_order(self):
         """Output should maintain descending order"""
         from create_unaligned_coding_seqs import filter_insertions_for_cds
 
         insertions = [(90, "AAA"), (60, "GGG"), (30, "TTT")]
-        result = filter_insertions_for_cds(insertions, 1, 100)
+        offset = 0  # No offset
+        result = filter_insertions_for_cds(insertions, 1, 100, offset)
 
         self.assertEqual(len(result), 3)
         self.assertEqual(result[0][0], 90)  # Highest position first
@@ -631,25 +639,87 @@ class TestFilterInsertionsForCds(unittest.TestCase):
         self.assertEqual(result[2][0], 30)
 
     def test_position_adjustment_calculation(self):
-        """Position adjustment should be correct (pos - start + 1)"""
+        """Position adjustment should transform from original to curated coords"""
         from create_unaligned_coding_seqs import filter_insertions_for_cds
 
         insertions = [(150, "CCC")]
-        result = filter_insertions_for_cds(insertions, 100, 200)
+        offset = 99  # offset = 100 - 1 = 99
+        result = filter_insertions_for_cds(insertions, 100, 200, offset)
 
         self.assertEqual(len(result), 1)
-        self.assertEqual(result[0], (51, "CCC"))  # 150 - 100 + 1 = 51
+        self.assertEqual(result[0], (51, "CCC"))  # 150 - 99 = 51
+
+    def test_realistic_ha_coordinates_with_offset(self):
+        """Test with realistic HA coordinates (5' UTR causes offset)"""
+        from create_unaligned_coding_seqs import filter_insertions_for_cds
+
+        # Realistic scenario: HA CDS starts at position 58, ends at 1708 in original ref
+        # After curation, MSA is positions 1-1651
+        # offset = 57 (58 - 1)
+        original_cds_start = 58
+        original_cds_end = 1708
+        offset = 57
+
+        # Insertion at position 100 in original reference
+        insertions = [(100, "AAA")]
+        result = filter_insertions_for_cds(insertions, original_cds_start, original_cds_end, offset)
+
+        # Should transform to position 43 in curated space (100 - 57)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0], (43, "AAA"))
+
+    def test_insertion_at_boundaries_with_large_offset(self):
+        """Test insertion filtering at boundaries with large offset"""
+        from create_unaligned_coding_seqs import filter_insertions_for_cds
+
+        # Original CDS: 100-500, offset = 99
+        # Curated CDS: 1-401
+        original_start = 100
+        original_end = 500
+        offset = 99
+
+        # Insertions at various positions
+        insertions = [
+            (99, "AAA"),   # Before CDS start (should be filtered)
+            (100, "GGG"),  # At CDS start (should be included → position 1)
+            (499, "TTT"),  # Just before CDS end (should be included → position 400)
+            (500, "CCC"),  # At CDS end (should be filtered, exclusive boundary)
+        ]
+
+        result = filter_insertions_for_cds(insertions, original_start, original_end, offset)
+
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result[0], (400, "TTT"))
+        self.assertEqual(result[1], (1, "GGG"))
+
+    def test_zero_offset_no_transformation(self):
+        """Test that zero offset doesn't break coordinate transformation"""
+        from create_unaligned_coding_seqs import filter_insertions_for_cds
+
+        offset = 0
+
+        # When offset is 0, original coords = curated coords
+        insertions = [(50, "AAA")]
+        result = filter_insertions_for_cds(insertions, 1, 100, offset)
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0], (50, "AAA"))  # No transformation
 
 
 class TestExtractCdsFromAligned(unittest.TestCase):
     """Tests for extract_cds_from_aligned() function"""
 
     def test_extract_cds_from_middle(self):
-        """Extract CDS from middle of sequence"""
+        """Extract CDS from middle of aligned sequence in curated MSA"""
         from create_unaligned_coding_seqs import extract_cds_from_aligned
 
-        aligned_seq = "NNNNNNATG---CGATCG---TAANNNNNN"
-        result = extract_cds_from_aligned(aligned_seq, 7, 24)
+        # Curated MSA already has non-coding regions removed
+        # This represents the curated MSA (coding region only)
+        aligned_seq = "ATG---CGATCG---TAANNNNNN"
+        # Original reference had CDS at positions 7-24
+        # With offset = 6, curated coords are 1-18
+        offset = 6
+        result = extract_cds_from_aligned(aligned_seq, 7, 24, offset)
 
         expected = "ATG---CGATCG---TAA"
         self.assertEqual(result, expected)
@@ -659,17 +729,22 @@ class TestExtractCdsFromAligned(unittest.TestCase):
         from create_unaligned_coding_seqs import extract_cds_from_aligned
 
         aligned_seq = "ATG---CGATCG---TAANNNNNN"
-        result = extract_cds_from_aligned(aligned_seq, 1, 18)
+        offset = 0  # CDS starts at position 1
+        result = extract_cds_from_aligned(aligned_seq, 1, 18, offset)
 
         expected = "ATG---CGATCG---TAA"
         self.assertEqual(result, expected)
 
     def test_extract_cds_to_end(self):
-        """Extract CDS to end of sequence"""
+        """Extract CDS to end of curated MSA sequence"""
         from create_unaligned_coding_seqs import extract_cds_from_aligned
 
-        aligned_seq = "NNNNNNATG---CGATCG---TAA"
-        result = extract_cds_from_aligned(aligned_seq, 7, 24)
+        # Curated MSA (coding region only)
+        aligned_seq = "ATG---CGATCG---TAA"
+        # Original coords: 7-24, offset = 6
+        # Curated coords: 1-18
+        offset = 6
+        result = extract_cds_from_aligned(aligned_seq, 7, 24, offset)
 
         expected = "ATG---CGATCG---TAA"
         self.assertEqual(result, expected)
@@ -679,7 +754,8 @@ class TestExtractCdsFromAligned(unittest.TestCase):
         from create_unaligned_coding_seqs import extract_cds_from_aligned
 
         aligned_seq = "ATG---CGATCG---TAA"
-        result = extract_cds_from_aligned(aligned_seq, 1, 19)
+        offset = 0  # No offset
+        result = extract_cds_from_aligned(aligned_seq, 1, 19, offset)
 
         self.assertEqual(result, aligned_seq)
 
@@ -688,7 +764,8 @@ class TestExtractCdsFromAligned(unittest.TestCase):
         from create_unaligned_coding_seqs import extract_cds_from_aligned
 
         aligned_seq = "ATGCGA---TCG---AAACCG---TTCTAA"
-        result = extract_cds_from_aligned(aligned_seq, 1, 33)
+        offset = 0  # No offset
+        result = extract_cds_from_aligned(aligned_seq, 1, 33, offset)
 
         self.assertEqual(result, aligned_seq)
         # After gap removal would be 24 bp
@@ -698,7 +775,8 @@ class TestExtractCdsFromAligned(unittest.TestCase):
         from create_unaligned_coding_seqs import extract_cds_from_aligned
 
         aligned_seq = "ATG------CGATCGTAA"
-        result = extract_cds_from_aligned(aligned_seq, 1, 18)
+        offset = 0  # No offset
+        result = extract_cds_from_aligned(aligned_seq, 1, 18, offset)
 
         self.assertEqual(result, aligned_seq)
         self.assertIn("------", result)
@@ -708,9 +786,21 @@ class TestExtractCdsFromAligned(unittest.TestCase):
         from create_unaligned_coding_seqs import extract_cds_from_aligned
 
         aligned_seq = "ATGCGATCGTAA"
-        result = extract_cds_from_aligned(aligned_seq, 1, 12)
+        offset = 0  # No offset
+        result = extract_cds_from_aligned(aligned_seq, 1, 12, offset)
 
         # Should extract entire sequence [0:12]
+        self.assertEqual(result, aligned_seq)
+
+    def test_extract_with_zero_offset(self):
+        """Test extraction with zero offset (no coordinate transformation)"""
+        from create_unaligned_coding_seqs import extract_cds_from_aligned
+
+        aligned_seq = "ATG---CGATCG---TAA"
+        offset = 0
+        result = extract_cds_from_aligned(aligned_seq, 1, 19, offset)
+
+        # With zero offset, coords don't change
         self.assertEqual(result, aligned_seq)
 
 
@@ -739,10 +829,11 @@ class TestExtractGeneCds(unittest.TestCase):
         raw_seq = "NNNNATGCGATCGTAANNNN"  # Contains the CDS
         cds_fragments = [{'start': 1, 'end': 19}]
         insertions_list = []
+        offset = 0  # No offset
 
         result, valid = extract_gene_cds(
             aligned_seq, cds_fragments, insertions_list,
-            "seq1", raw_seq, "HA", self.logger
+            "seq1", raw_seq, "HA", offset, self.logger
         )
 
         self.assertEqual(result, VALID_CDS_PERGENE)
@@ -756,10 +847,11 @@ class TestExtractGeneCds(unittest.TestCase):
         raw_seq = "NNNNTTTGGGCCCAAANNNN"  # Does NOT contain the CDS
         cds_fragments = [{'start': 1, 'end': 19}]
         insertions_list = []
+        offset = 0  # No offset
 
         result, valid = extract_gene_cds(
             aligned_seq, cds_fragments, insertions_list,
-            "seq1", raw_seq, "HA", self.logger
+            "seq1", raw_seq, "HA", offset, self.logger
         )
 
         self.assertEqual(result, VALID_CDS_PERGENE)
@@ -781,10 +873,11 @@ class TestExtractGeneCds(unittest.TestCase):
             {'start': 503, 'end': 514}
         ]
         insertions_list = []
+        offset = 0  # No offset
 
         result, valid = extract_gene_cds(
             aligned_seq, cds_fragments, insertions_list,
-            "seq1", raw_seq, "NEP", self.logger
+            "seq1", raw_seq, "NEP", offset, self.logger
         )
 
         expected = NEP_FRAGMENT1_PERGENE + NEP_FRAGMENT2_PERGENE
@@ -802,10 +895,11 @@ class TestExtractGeneCds(unittest.TestCase):
             {'start': 503, 'end': 514}
         ]
         insertions_list = []
+        offset = 0  # No offset
 
         result, valid = extract_gene_cds(
             aligned_seq, cds_fragments, insertions_list,
-            "seq1", raw_seq, "NEP", self.logger
+            "seq1", raw_seq, "NEP", offset, self.logger
         )
 
         self.assertFalse(valid)
@@ -824,10 +918,11 @@ class TestExtractGeneCds(unittest.TestCase):
             {'start': 503, 'end': 514}
         ]
         insertions_list = []
+        offset = 0  # No offset
 
         result, valid = extract_gene_cds(
             aligned_seq, cds_fragments, insertions_list,
-            "seq1", raw_seq, "NEP", self.logger
+            "seq1", raw_seq, "NEP", offset, self.logger
         )
 
         self.assertFalse(valid)
@@ -843,10 +938,11 @@ class TestExtractGeneCds(unittest.TestCase):
         raw_seq = "NNNNATGCGATCGTAANNNN"  # Uppercase
         cds_fragments = [{'start': 1, 'end': 19}]
         insertions_list = []
+        offset = 0  # No offset
 
         result, valid = extract_gene_cds(
             aligned_seq, cds_fragments, insertions_list,
-            "seq1", raw_seq, "HA", self.logger
+            "seq1", raw_seq, "HA", offset, self.logger
         )
 
         self.assertTrue(valid)
@@ -862,10 +958,11 @@ class TestExtractGeneCds(unittest.TestCase):
         raw_seq = "NNNNATGCGATCGAAATAANNNN"
         cds_fragments = [{'start': 1, 'end': 18}]
         insertions_list = [(12, "AAA")]  # Insert AAA after aligned position 12
+        offset = 0  # No offset
 
         result, valid = extract_gene_cds(
             aligned_seq, cds_fragments, insertions_list,
-            "seq1", raw_seq, "HA", self.logger
+            "seq1", raw_seq, "HA", offset, self.logger
         )
 
         expected = "ATGCGATCGAAATAA"  # 15 bp (12 original + 3 inserted)
@@ -879,14 +976,84 @@ class TestExtractGeneCds(unittest.TestCase):
         aligned_seq = "ATG---CGATCG---TAA"
         cds_fragments = [{'start': 1, 'end': 19}]
         insertions_list = []
+        offset = 0  # No offset
 
         with self.assertRaises(ValueError) as context:
             extract_gene_cds(
                 aligned_seq, cds_fragments, insertions_list,
-                "seq1", None, "HA", self.logger
+                "seq1", None, "HA", offset, self.logger
             )
 
         self.assertIn("raw_seq is required", str(context.exception))
+
+    def test_spliced_gene_with_offset(self):
+        """Test spliced gene (NEP-like) with coordinate transformation"""
+        from create_unaligned_coding_seqs import extract_gene_cds
+
+        # Realistic NS segment: CDS starts at position 27 in original reference
+        # Fragment 1: original coords 27-56 (30bp)
+        # Fragment 2: original coords 529-864 (336bp)
+        # offset = 26 (27 - 1)
+        # After transformation:
+        # Fragment 1: curated coords 1-30
+        # Fragment 2: curated coords 503-838
+
+        offset = 26
+        # Curated MSA (30bp + 472bp gap + 336bp)
+        aligned_seq = NEP_FRAGMENT1_PERGENE + ("N" * 472) + NEP_FRAGMENT2_PERGENE
+        raw_seq = NEP_FRAGMENT1_PERGENE + "NNNNN" + NEP_FRAGMENT2_PERGENE
+
+        cds_fragments = [
+            {'start': 27, 'end': 56},    # Original coords
+            {'start': 529, 'end': 864}   # Original coords
+        ]
+        insertions_list = []
+
+        result, valid = extract_gene_cds(
+            aligned_seq, cds_fragments, insertions_list,
+            "seq1", raw_seq, "NEP", offset, self.logger
+        )
+
+        expected = NEP_FRAGMENT1_PERGENE + NEP_FRAGMENT2_PERGENE
+        self.assertEqual(result, expected)
+        self.assertTrue(valid)
+
+    def test_full_workflow_with_coordinate_transformation(self):
+        """Integration test: full CDS extraction with coordinate transformation"""
+        from create_unaligned_coding_seqs import extract_gene_cds
+
+        # Simulate realistic scenario:
+        # - Original reference has 5' UTR (positions 1-57)
+        # - CDS at positions 58-264 in original reference (207bp)
+        # - Curated MSA trimmed to positions 1-207
+        # - offset = 57
+
+        offset = 57
+
+        # Curated MSA: CDS only (no UTR) - 12bp with gaps
+        # The alignment has gaps where the insertion was removed
+        aligned_seq = "ATG---CGATCG---TAA"
+        # Raw sequence contains the insertion that was removed during alignment
+        raw_seq = "NNNNATGCGATCGAAATAANNNN"  # Contains "AAA" that will be re-inserted
+
+        # CDS in original coords: 58-76 (19 positions in aligned seq)
+        # In curated coords: 1-19 (after transformation)
+        cds_fragments = [{'start': 58, 'end': 76}]
+
+        # Insertion at position 70 in original reference
+        # Should transform to position 13 in curated space (70 - 57)
+        insertions_list = [(70, "AAA")]
+
+        result, valid = extract_gene_cds(
+            aligned_seq, cds_fragments, insertions_list,
+            "test_seq", raw_seq, "HA", offset, self.logger
+        )
+
+        # Validate result
+        self.assertTrue(valid)
+        self.assertIn("AAA", result)  # Insertion should be present
+        self.assertTrue(len(result) % 3 == 0)  # Should be in frame
+        self.assertEqual(len(result), 15)  # 12 original + 3 inserted
 
 
 class TestValidateCds(unittest.TestCase):
