@@ -1,5 +1,8 @@
 """
-Tests for create_unaligned_coding_seqs.py
+Tests for curate_and_extract_coding_seqs.py
+
+This file combines tests for both MSA curation and coding sequence extraction
+functionality, since these were combined into a single script.
 """
 
 import unittest
@@ -16,13 +19,367 @@ from Bio import SeqIO
 import sys
 sys.path.insert(0, os.path.dirname(__file__))
 from curate_and_extract_coding_seqs import (
+    # MSA curation functions
+    create_matching_gff_and_gtf,
+    slice_record,
+    get_ambiguous_chars,
+    analyze_record,
+    filter_sequences,
+    # Coding sequence extraction functions
     parse_insertions_from_tsv,
     remove_gaps,
     insert_nucleotides,
-    validate_against_raw_sequences
+    validate_against_raw_sequences,
+    filter_insertions_for_cds,
+    extract_cds_from_aligned,
+    extract_gene_cds,
+    validate_cds
 )
-from utils import sanitize_id, get_coding_region_coords
+from utils import (
+    sanitize_id,
+    get_coding_region_coords,
+    group_cds_by_gene,
+    extract_all_genes_and_cds
+)
 
+
+# ============================================================================
+# TESTS FOR MSA CURATION FUNCTIONS
+# ============================================================================
+
+class TestSliceRecord(unittest.TestCase):
+    """Tests for slice_record function"""
+
+    def test_basic_slicing(self):
+        """Test basic sequence slicing"""
+        record = SeqRecord(Seq("ACGTACGTACGT"), id="seq1", description="test")
+        sliced = slice_record(record, 3, 8)
+        # Positions 3-8 (1-based) = indices 2-8 (0-based exclusive) = "GTACGT"
+        self.assertEqual(str(sliced.seq), "GTACGT")
+        self.assertEqual(sliced.id, "seq1")
+
+    def test_slicing_with_sanitization(self):
+        """Test that sequence IDs are sanitized"""
+        record = SeqRecord(Seq("ACGTACGTACGT"), id="seq[1]:test", description="test")
+        sliced = slice_record(record, 1, 12)
+        # ID should be sanitized
+        self.assertEqual(sliced.id, "seq1test")
+
+    def test_full_sequence(self):
+        """Test slicing entire sequence"""
+        record = SeqRecord(Seq("ACGTACGT"), id="seq1", description="test")
+        sliced = slice_record(record, 1, 8)
+        self.assertEqual(str(sliced.seq), "ACGTACGT")
+
+    def test_single_position(self):
+        """Test slicing single position"""
+        record = SeqRecord(Seq("ACGTACGT"), id="seq1", description="test")
+        sliced = slice_record(record, 3, 3)
+        self.assertEqual(str(sliced.seq), "G")
+
+
+class TestGetAmbiguousChars(unittest.TestCase):
+    """Tests for get_ambiguous_chars function"""
+
+    def test_no_ambiguous(self):
+        """Test with only standard nucleotides"""
+        records = [
+            SeqRecord(Seq("ACGT-ACGT"), id="seq1"),
+            SeqRecord(Seq("GCTA-GCTA"), id="seq2")
+        ]
+        ambig = get_ambiguous_chars(records)
+        self.assertEqual(ambig, set())
+
+    def test_with_n(self):
+        """Test with N characters"""
+        records = [
+            SeqRecord(Seq("ACGTNACGT"), id="seq1"),
+            SeqRecord(Seq("GCTA-GCTA"), id="seq2")
+        ]
+        ambig = get_ambiguous_chars(records)
+        self.assertEqual(ambig, {'N'})
+
+    def test_multiple_ambiguous(self):
+        """Test with multiple ambiguous characters"""
+        records = [
+            SeqRecord(Seq("ACGTNRYWSKM"), id="seq1"),
+        ]
+        ambig = get_ambiguous_chars(records)
+        # N, R, Y, W, S, K, M are all ambiguous
+        self.assertEqual(ambig, {'N', 'R', 'Y', 'W', 'S', 'K', 'M'})
+
+
+class TestAnalyzeRecord(unittest.TestCase):
+    """Tests for analyze_record function"""
+
+    def test_no_gaps_no_ambiguous(self):
+        """Test sequence with no gaps or ambiguous characters"""
+        record = SeqRecord(Seq("ACGTACGT"), id="seq1")
+        ambig_chars = set()
+        result = analyze_record(record, ambig_chars)
+
+        self.assertEqual(result['id'], "seq1")
+        self.assertEqual(result['length'], 8)
+        self.assertEqual(result['frac_gaps'], 0.0)
+        self.assertEqual(result['frac_ambiguous'], 0.0)
+
+    def test_with_gaps(self):
+        """Test sequence with gaps"""
+        record = SeqRecord(Seq("ACGT--ACGT"), id="seq1")
+        ambig_chars = set()
+        result = analyze_record(record, ambig_chars)
+
+        self.assertEqual(result['length'], 10)
+        self.assertEqual(result['frac_gaps'], 0.2)  # 2 gaps out of 10
+        self.assertEqual(result['frac_ambiguous'], 0.0)
+
+    def test_with_ambiguous(self):
+        """Test sequence with ambiguous characters"""
+        record = SeqRecord(Seq("ACGTNNNACGT"), id="seq1")
+        ambig_chars = {'N'}
+        result = analyze_record(record, ambig_chars)
+
+        self.assertEqual(result['length'], 11)
+        self.assertEqual(result['frac_gaps'], 0.0)
+        self.assertAlmostEqual(result['frac_ambiguous'], 3/11, places=5)
+
+    def test_with_gaps_and_ambiguous(self):
+        """Test sequence with both gaps and ambiguous characters"""
+        record = SeqRecord(Seq("ACGT--NNNACGT"), id="seq1")
+        ambig_chars = {'N'}
+        result = analyze_record(record, ambig_chars)
+
+        self.assertEqual(result['length'], 13)
+        self.assertAlmostEqual(result['frac_gaps'], 2/13, places=5)
+        self.assertAlmostEqual(result['frac_ambiguous'], 3/13, places=5)
+
+
+class TestFilterSequences(unittest.TestCase):
+    """Tests for filter_sequences function"""
+
+    def setUp(self):
+        """Set up test logger"""
+        self.logger = logging.getLogger(__name__)
+        self.logger.setLevel(logging.WARNING)  # Reduce noise in tests
+
+    def test_filter_by_gaps(self):
+        """Test filtering sequences by gap content"""
+        records = [
+            SeqRecord(Seq("ACGTACGT"), id="seq1"),        # 0% gaps - KEEP
+            SeqRecord(Seq("ACGT--ACGT"), id="seq2"),      # 20% gaps - FILTER
+            SeqRecord(Seq("ACGT-ACGT"), id="seq3"),       # 11% gaps - FILTER
+        ]
+        ambig_chars = set()
+
+        filtered = filter_sequences(records, ambig_chars, max_frac_gaps=0.05,
+                                   max_frac_ambig=0.01, logger=self.logger)
+
+        self.assertEqual(len(filtered), 1)
+        self.assertEqual(filtered[0].id, "seq1")
+
+    def test_filter_by_ambiguous(self):
+        """Test filtering sequences by ambiguous nucleotide content"""
+        records = [
+            SeqRecord(Seq("ACGTACGT"), id="seq1"),        # 0% ambig - KEEP
+            SeqRecord(Seq("ACGTNNNACGT"), id="seq2"),     # 27% ambig - FILTER
+            SeqRecord(Seq("ACGTNACGT"), id="seq3"),       # 11% ambig - FILTER
+        ]
+        ambig_chars = {'N'}
+
+        filtered = filter_sequences(records, ambig_chars, max_frac_gaps=0.05,
+                                   max_frac_ambig=0.01, logger=self.logger)
+
+        self.assertEqual(len(filtered), 1)
+        self.assertEqual(filtered[0].id, "seq1")
+
+    def test_filter_terminal_gaps(self):
+        """Test filtering sequences with terminal gaps"""
+        records = [
+            SeqRecord(Seq("ACGTACGT"), id="seq1"),        # No terminal gaps - KEEP
+            SeqRecord(Seq("---ACGTACGT"), id="seq2"),     # Terminal gaps at start - FILTER
+            SeqRecord(Seq("ACGTACGT---"), id="seq3"),     # Terminal gaps at end - FILTER
+            SeqRecord(Seq("ACGT---ACGT"), id="seq4"),     # Internal gaps only - KEEP
+        ]
+        ambig_chars = set()
+
+        filtered = filter_sequences(records, ambig_chars, max_frac_gaps=1.0,
+                                   max_frac_ambig=1.0, logger=self.logger)
+
+        self.assertEqual(len(filtered), 2)
+        self.assertEqual(filtered[0].id, "seq1")
+        self.assertEqual(filtered[1].id, "seq4")
+
+    def test_replace_ambiguous_with_n(self):
+        """Test that ambiguous characters are replaced with N"""
+        records = [
+            SeqRecord(Seq("ACGTRYWACGT"), id="seq1"),
+        ]
+        ambig_chars = {'R', 'Y', 'W'}
+
+        filtered = filter_sequences(records, ambig_chars, max_frac_gaps=1.0,
+                                   max_frac_ambig=1.0, logger=self.logger)
+
+        self.assertEqual(len(filtered), 1)
+        # R, Y, W should all be replaced with N
+        self.assertEqual(str(filtered[0].seq), "ACGTNNNACGT")
+
+    def test_filter_duplicates(self):
+        """Test filtering duplicate sequences"""
+        records = [
+            SeqRecord(Seq("ACGTACGT"), id="seq1"),        # First occurrence - KEEP
+            SeqRecord(Seq("GCTAGCTA"), id="seq2"),        # Different - KEEP
+            SeqRecord(Seq("ACGTACGT"), id="seq3"),        # Duplicate - FILTER
+            SeqRecord(Seq("GCTAGCTA"), id="seq4"),        # Duplicate - FILTER
+        ]
+        ambig_chars = set()
+
+        filtered = filter_sequences(records, ambig_chars, max_frac_gaps=1.0,
+                                   max_frac_ambig=1.0, logger=self.logger,
+                                   filter_duplicates=True)
+
+        self.assertEqual(len(filtered), 2)
+        self.assertEqual(filtered[0].id, "seq1")
+        self.assertEqual(filtered[1].id, "seq2")
+
+    def test_replace_gaps_with_ref(self):
+        """Test replacing gaps with reference nucleotides"""
+        records = [
+            SeqRecord(Seq("ACGTACGT"), id="ref"),         # Reference (no gaps)
+            SeqRecord(Seq("ACGT--GT"), id="seq1"),        # Has gaps
+            SeqRecord(Seq("AC--ACGT"), id="seq2"),        # Has gaps
+        ]
+        ambig_chars = set()
+
+        filtered = filter_sequences(records, ambig_chars, max_frac_gaps=1.0,
+                                   max_frac_ambig=1.0, logger=self.logger,
+                                   replace_gaps_with_ref=True)
+
+        self.assertEqual(len(filtered), 3)
+        # Reference should be unchanged
+        self.assertEqual(str(filtered[0].seq), "ACGTACGT")
+        # Gaps should be replaced with reference nucleotides
+        self.assertEqual(str(filtered[1].seq), "ACGTACGT")
+        self.assertEqual(str(filtered[2].seq), "ACGTACGT")
+
+
+class TestCreateMatchingGffAndGtf(unittest.TestCase):
+    """Tests for create_matching_gff_and_gtf function"""
+
+    def test_single_feature(self):
+        """Test creating GFF/GTF with single feature"""
+        features = [{
+            'id': 'cds1',
+            'name': 'HA',
+            'type': 'CDS',
+            'start': 1,
+            'end': 1683,
+            'strand': '+',
+            'phase': '0',
+            'attributes': 'ID=cds1;Name=HA'
+        }]
+
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.gff', delete=False) as gff_file:
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.gtf', delete=False) as gtf_file:
+                try:
+                    create_matching_gff_and_gtf(gff_file.name, gtf_file.name, features, min_start=1)
+
+                    # Check GFF file
+                    with open(gff_file.name, 'r') as f:
+                        gff_content = f.read()
+                        self.assertIn('##gff-version 3', gff_content)
+                        self.assertIn('##sequence-region Reference 1 1683', gff_content)
+                        self.assertIn('CDS\t1\t1683', gff_content)
+
+                    # Check GTF file
+                    with open(gtf_file.name, 'r') as f:
+                        gtf_content = f.read()
+                        self.assertIn('CDS\t1\t1683', gtf_content)
+                        self.assertIn('gene_id "cds1"', gtf_content)
+                        self.assertIn('gene_name "HA"', gtf_content)
+
+                finally:
+                    os.unlink(gff_file.name)
+                    os.unlink(gtf_file.name)
+
+    def test_coordinate_adjustment(self):
+        """Test that coordinates are adjusted correctly"""
+        features = [{
+            'id': 'cds1',
+            'name': 'HA',
+            'type': 'CDS',
+            'start': 50,
+            'end': 1733,
+            'strand': '+',
+            'phase': '0',
+            'attributes': 'ID=cds1;Name=HA'
+        }]
+
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.gff', delete=False) as gff_file:
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.gtf', delete=False) as gtf_file:
+                try:
+                    # min_start=50 means position 50 becomes position 1
+                    create_matching_gff_and_gtf(gff_file.name, gtf_file.name, features, min_start=50)
+
+                    # Check GFF file - coordinates should be adjusted
+                    with open(gff_file.name, 'r') as f:
+                        gff_content = f.read()
+                        self.assertIn('##sequence-region Reference 1 1684', gff_content)
+                        self.assertIn('CDS\t1\t1684', gff_content)
+
+                finally:
+                    os.unlink(gff_file.name)
+                    os.unlink(gtf_file.name)
+
+    def test_multiple_features(self):
+        """Test creating GFF/GTF with multiple features"""
+        features = [
+            {
+                'id': 'gene1',
+                'name': 'HA',
+                'type': 'gene',
+                'start': 1,
+                'end': 1683,
+                'strand': '+',
+                'phase': '.',
+                'attributes': 'ID=gene1;Name=HA'
+            },
+            {
+                'id': 'cds1',
+                'name': 'HA_CDS',
+                'type': 'CDS',
+                'start': 1,
+                'end': 1683,
+                'strand': '+',
+                'phase': '0',
+                'attributes': 'ID=cds1;Name=HA_CDS;Parent=gene1'
+            }
+        ]
+
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.gff', delete=False) as gff_file:
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.gtf', delete=False) as gtf_file:
+                try:
+                    create_matching_gff_and_gtf(gff_file.name, gtf_file.name, features, min_start=1)
+
+                    # Check that both features are in GFF
+                    with open(gff_file.name, 'r') as f:
+                        gff_content = f.read()
+                        self.assertIn('gene\t1\t1683', gff_content)
+                        self.assertIn('CDS\t1\t1683', gff_content)
+
+                    # Check that both features are in GTF
+                    with open(gtf_file.name, 'r') as f:
+                        gtf_content = f.read()
+                        self.assertIn('gene\t1\t1683', gtf_content)
+                        self.assertIn('CDS\t1\t1683', gtf_content)
+
+                finally:
+                    os.unlink(gff_file.name)
+                    os.unlink(gtf_file.name)
+
+
+# ============================================================================
+# TESTS FOR UTILITY FUNCTIONS
+# ============================================================================
 
 class TestSanitizeId(unittest.TestCase):
     """Tests for sanitize_id function"""
@@ -45,6 +402,57 @@ class TestSanitizeId(unittest.TestCase):
         """Test removal of multiple problematic characters"""
         self.assertEqual(sanitize_id("A/H1N1[2023]:variant.1"), "A/H1N12023variant1")
 
+
+class TestGetCodingRegionCoords(unittest.TestCase):
+    """Tests for get_coding_region_coords function"""
+
+    def test_single_cds(self):
+        """Test GFF with single CDS feature"""
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.gff', delete=False) as f:
+            f.write("##gff-version 3\n")
+            f.write("ref\tNCBI\tCDS\t1\t1683\t.\t+\t0\tID=cds1;Name=HA\n")
+            f.flush()
+
+            try:
+                min_start, max_end = get_coding_region_coords(f.name)
+                self.assertEqual(min_start, 1)
+                self.assertEqual(max_end, 1683)
+            finally:
+                os.unlink(f.name)
+
+    def test_multiple_cds(self):
+        """Test GFF with multiple CDS features"""
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.gff', delete=False) as f:
+            f.write("##gff-version 3\n")
+            f.write("ref\tNCBI\tCDS\t10\t500\t.\t+\t0\tID=cds1\n")
+            f.write("ref\tNCBI\tCDS\t600\t1000\t.\t+\t0\tID=cds2\n")
+            f.flush()
+
+            try:
+                min_start, max_end = get_coding_region_coords(f.name)
+                self.assertEqual(min_start, 10)
+                self.assertEqual(max_end, 1000)
+            finally:
+                os.unlink(f.name)
+
+    def test_gene_feature(self):
+        """Test GFF with gene feature"""
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.gff', delete=False) as f:
+            f.write("##gff-version 3\n")
+            f.write("ref\tNCBI\tgene\t50\t1500\t.\t+\t.\tID=gene1\n")
+            f.flush()
+
+            try:
+                min_start, max_end = get_coding_region_coords(f.name)
+                self.assertEqual(min_start, 50)
+                self.assertEqual(max_end, 1500)
+            finally:
+                os.unlink(f.name)
+
+
+# ============================================================================
+# TESTS FOR CODING SEQUENCE EXTRACTION FUNCTIONS
+# ============================================================================
 
 class TestRemoveGaps(unittest.TestCase):
     """Tests for remove_gaps function"""
@@ -139,53 +547,6 @@ class TestInsertNucleotides(unittest.TestCase):
 
         # Wrong workflow would be: remove gaps first (8 chars), then try to insert at
         # position 11, which is past the end or at the wrong location
-
-
-class TestGetCodingRegionCoords(unittest.TestCase):
-    """Tests for get_coding_region_coords function"""
-
-    def test_single_cds(self):
-        """Test GFF with single CDS feature"""
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.gff', delete=False) as f:
-            f.write("##gff-version 3\n")
-            f.write("ref\tNCBI\tCDS\t1\t1683\t.\t+\t0\tID=cds1;Name=HA\n")
-            f.flush()
-
-            try:
-                min_start, max_end = get_coding_region_coords(f.name)
-                self.assertEqual(min_start, 1)
-                self.assertEqual(max_end, 1683)
-            finally:
-                os.unlink(f.name)
-
-    def test_multiple_cds(self):
-        """Test GFF with multiple CDS features"""
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.gff', delete=False) as f:
-            f.write("##gff-version 3\n")
-            f.write("ref\tNCBI\tCDS\t10\t500\t.\t+\t0\tID=cds1\n")
-            f.write("ref\tNCBI\tCDS\t600\t1000\t.\t+\t0\tID=cds2\n")
-            f.flush()
-
-            try:
-                min_start, max_end = get_coding_region_coords(f.name)
-                self.assertEqual(min_start, 10)
-                self.assertEqual(max_end, 1000)
-            finally:
-                os.unlink(f.name)
-
-    def test_gene_feature(self):
-        """Test GFF with gene feature"""
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.gff', delete=False) as f:
-            f.write("##gff-version 3\n")
-            f.write("ref\tNCBI\tgene\t50\t1500\t.\t+\t.\tID=gene1\n")
-            f.flush()
-
-            try:
-                min_start, max_end = get_coding_region_coords(f.name)
-                self.assertEqual(min_start, 50)
-                self.assertEqual(max_end, 1500)
-            finally:
-                os.unlink(f.name)
 
 
 class TestParseInsertionsFromTsv(unittest.TestCase):
@@ -351,8 +712,6 @@ class TestGroupCdsByGene(unittest.TestCase):
 
     def test_single_gene_single_cds(self):
         """Single CDS feature for HA gene"""
-        from utils import group_cds_by_gene
-
         features = [
             {
                 'type': 'CDS',
@@ -371,8 +730,6 @@ class TestGroupCdsByGene(unittest.TestCase):
 
     def test_spliced_gene_nep(self):
         """Two CDS features with same protein_id (NEP case)"""
-        from utils import group_cds_by_gene
-
         features = [
             {
                 'type': 'CDS',
@@ -398,8 +755,6 @@ class TestGroupCdsByGene(unittest.TestCase):
 
     def test_multiple_genes_no_splicing(self):
         """NS1 CDS and NEP CDS fragments (different protein_ids)"""
-        from utils import group_cds_by_gene
-
         features = [
             {
                 'type': 'CDS',
@@ -433,8 +788,6 @@ class TestGroupCdsByGene(unittest.TestCase):
 
     def test_cds_sorting_by_start_position(self):
         """CDS features provided out of order should be sorted"""
-        from utils import group_cds_by_gene
-
         features = [
             {
                 'type': 'CDS',
@@ -459,8 +812,6 @@ class TestGroupCdsByGene(unittest.TestCase):
 
     def test_gene_without_protein_id(self):
         """CDS feature with gene attribute but no protein_id"""
-        from utils import group_cds_by_gene
-
         features = [
             {
                 'type': 'CDS',
@@ -478,8 +829,6 @@ class TestGroupCdsByGene(unittest.TestCase):
 
     def test_mixed_protein_ids(self):
         """Some CDS with protein_id, some without"""
-        from utils import group_cds_by_gene
-
         features = [
             {
                 'type': 'CDS',
@@ -504,8 +853,6 @@ class TestGroupCdsByGene(unittest.TestCase):
 
     def test_non_cds_features_ignored(self):
         """Mix of CDS, gene, mRNA features - only CDS should be grouped"""
-        from utils import group_cds_by_gene
-
         features = [
             {
                 'type': 'gene',
@@ -536,8 +883,6 @@ class TestGroupCdsByGene(unittest.TestCase):
 
     def test_empty_feature_list(self):
         """Empty list should return empty dict"""
-        from utils import group_cds_by_gene
-
         features = []
         result = group_cds_by_gene(features)
 
@@ -550,8 +895,6 @@ class TestFilterInsertionsForCds(unittest.TestCase):
 
     def test_no_insertions(self):
         """Empty insertion list should return empty list"""
-        from curate_and_extract_coding_seqs import filter_insertions_for_cds
-
         insertions = []
         offset = 0  # No offset for this test
         result = filter_insertions_for_cds(insertions, 50, 150, offset)
@@ -561,8 +904,6 @@ class TestFilterInsertionsForCds(unittest.TestCase):
 
     def test_single_codon_insertion_within_cds(self):
         """Insertion at position 50 within CDS 1-100"""
-        from curate_and_extract_coding_seqs import filter_insertions_for_cds
-
         insertions = [(50, "AAA")]
         offset = 0  # Original coords = curated coords
         result = filter_insertions_for_cds(insertions, 1, 100, offset)
@@ -572,8 +913,6 @@ class TestFilterInsertionsForCds(unittest.TestCase):
 
     def test_insertion_before_cds(self):
         """Insertion before CDS start should be filtered out"""
-        from curate_and_extract_coding_seqs import filter_insertions_for_cds
-
         insertions = [(10, "GGG")]
         offset = 0
         result = filter_insertions_for_cds(insertions, 50, 150, offset)
@@ -582,8 +921,6 @@ class TestFilterInsertionsForCds(unittest.TestCase):
 
     def test_insertion_after_cds(self):
         """Insertion after CDS end should be filtered out"""
-        from curate_and_extract_coding_seqs import filter_insertions_for_cds
-
         insertions = [(200, "TTT")]
         offset = 0
         result = filter_insertions_for_cds(insertions, 50, 150, offset)
@@ -592,8 +929,6 @@ class TestFilterInsertionsForCds(unittest.TestCase):
 
     def test_insertion_at_cds_start_boundary(self):
         """Insertion at CDS start boundary should be included"""
-        from curate_and_extract_coding_seqs import filter_insertions_for_cds
-
         insertions = [(50, "CCC")]
         offset = 49  # offset = min_start - 1 = 50 - 1 = 49
         result = filter_insertions_for_cds(insertions, 50, 150, offset)
@@ -603,8 +938,6 @@ class TestFilterInsertionsForCds(unittest.TestCase):
 
     def test_insertion_at_cds_end_boundary(self):
         """Insertion at position 149 (before end 150) should be included"""
-        from curate_and_extract_coding_seqs import filter_insertions_for_cds
-
         insertions = [(149, "GGG")]
         offset = 49  # offset = 50 - 1 = 49
         result = filter_insertions_for_cds(insertions, 50, 150, offset)
@@ -614,8 +947,6 @@ class TestFilterInsertionsForCds(unittest.TestCase):
 
     def test_multiple_codon_insertions_mixed(self):
         """Multiple insertions, some within CDS, some outside"""
-        from curate_and_extract_coding_seqs import filter_insertions_for_cds
-
         insertions = [(200, "AAA"), (100, "GGG"), (60, "TTT"), (10, "CCC")]
         offset = 49  # offset = 50 - 1 = 49
         result = filter_insertions_for_cds(insertions, 50, 150, offset)
@@ -627,8 +958,6 @@ class TestFilterInsertionsForCds(unittest.TestCase):
 
     def test_maintains_descending_order(self):
         """Output should maintain descending order"""
-        from curate_and_extract_coding_seqs import filter_insertions_for_cds
-
         insertions = [(90, "AAA"), (60, "GGG"), (30, "TTT")]
         offset = 0  # No offset
         result = filter_insertions_for_cds(insertions, 1, 100, offset)
@@ -640,8 +969,6 @@ class TestFilterInsertionsForCds(unittest.TestCase):
 
     def test_position_adjustment_calculation(self):
         """Position adjustment should transform from original to curated coords"""
-        from curate_and_extract_coding_seqs import filter_insertions_for_cds
-
         insertions = [(150, "CCC")]
         offset = 99  # offset = 100 - 1 = 99
         result = filter_insertions_for_cds(insertions, 100, 200, offset)
@@ -651,8 +978,6 @@ class TestFilterInsertionsForCds(unittest.TestCase):
 
     def test_realistic_ha_coordinates_with_offset(self):
         """Test with realistic HA coordinates (5' UTR causes offset)"""
-        from curate_and_extract_coding_seqs import filter_insertions_for_cds
-
         # Realistic scenario: HA CDS starts at position 58, ends at 1708 in original ref
         # After curation, MSA is positions 1-1651
         # offset = 57 (58 - 1)
@@ -670,8 +995,6 @@ class TestFilterInsertionsForCds(unittest.TestCase):
 
     def test_insertion_at_boundaries_with_large_offset(self):
         """Test insertion filtering at boundaries with large offset"""
-        from curate_and_extract_coding_seqs import filter_insertions_for_cds
-
         # Original CDS: 100-500, offset = 99
         # Curated CDS: 1-401
         original_start = 100
@@ -694,8 +1017,6 @@ class TestFilterInsertionsForCds(unittest.TestCase):
 
     def test_zero_offset_no_transformation(self):
         """Test that zero offset doesn't break coordinate transformation"""
-        from curate_and_extract_coding_seqs import filter_insertions_for_cds
-
         offset = 0
 
         # When offset is 0, original coords = curated coords
@@ -711,8 +1032,6 @@ class TestExtractCdsFromAligned(unittest.TestCase):
 
     def test_extract_cds_from_middle(self):
         """Extract CDS from middle of aligned sequence in curated MSA"""
-        from curate_and_extract_coding_seqs import extract_cds_from_aligned
-
         # Curated MSA already has non-coding regions removed
         # This represents the curated MSA (coding region only)
         aligned_seq = "ATG---CGATCG---TAANNNNNN"
@@ -726,8 +1045,6 @@ class TestExtractCdsFromAligned(unittest.TestCase):
 
     def test_extract_cds_from_beginning(self):
         """Extract CDS from beginning of sequence"""
-        from curate_and_extract_coding_seqs import extract_cds_from_aligned
-
         aligned_seq = "ATG---CGATCG---TAANNNNNN"
         offset = 0  # CDS starts at position 1
         result = extract_cds_from_aligned(aligned_seq, 1, 18, offset)
@@ -737,8 +1054,6 @@ class TestExtractCdsFromAligned(unittest.TestCase):
 
     def test_extract_cds_to_end(self):
         """Extract CDS to end of curated MSA sequence"""
-        from curate_and_extract_coding_seqs import extract_cds_from_aligned
-
         # Curated MSA (coding region only)
         aligned_seq = "ATG---CGATCG---TAA"
         # Original coords: 7-24, offset = 6
@@ -751,8 +1066,6 @@ class TestExtractCdsFromAligned(unittest.TestCase):
 
     def test_extract_entire_cds(self):
         """Extract entire sequence as CDS"""
-        from curate_and_extract_coding_seqs import extract_cds_from_aligned
-
         aligned_seq = "ATG---CGATCG---TAA"
         offset = 0  # No offset
         result = extract_cds_from_aligned(aligned_seq, 1, 19, offset)
@@ -761,8 +1074,6 @@ class TestExtractCdsFromAligned(unittest.TestCase):
 
     def test_extract_longer_cds_with_gaps(self):
         """Extract longer CDS with multiple gap regions"""
-        from curate_and_extract_coding_seqs import extract_cds_from_aligned
-
         aligned_seq = "ATGCGA---TCG---AAACCG---TTCTAA"
         offset = 0  # No offset
         result = extract_cds_from_aligned(aligned_seq, 1, 33, offset)
@@ -772,8 +1083,6 @@ class TestExtractCdsFromAligned(unittest.TestCase):
 
     def test_preserve_gaps_in_extraction(self):
         """Gaps should be preserved in extracted sequence"""
-        from curate_and_extract_coding_seqs import extract_cds_from_aligned
-
         aligned_seq = "ATG------CGATCGTAA"
         offset = 0  # No offset
         result = extract_cds_from_aligned(aligned_seq, 1, 18, offset)
@@ -783,8 +1092,6 @@ class TestExtractCdsFromAligned(unittest.TestCase):
 
     def test_zero_based_conversion(self):
         """1-based coordinates should be converted correctly to 0-based"""
-        from curate_and_extract_coding_seqs import extract_cds_from_aligned
-
         aligned_seq = "ATGCGATCGTAA"
         offset = 0  # No offset
         result = extract_cds_from_aligned(aligned_seq, 1, 12, offset)
@@ -794,8 +1101,6 @@ class TestExtractCdsFromAligned(unittest.TestCase):
 
     def test_extract_with_zero_offset(self):
         """Test extraction with zero offset (no coordinate transformation)"""
-        from curate_and_extract_coding_seqs import extract_cds_from_aligned
-
         aligned_seq = "ATG---CGATCG---TAA"
         offset = 0
         result = extract_cds_from_aligned(aligned_seq, 1, 19, offset)
@@ -823,8 +1128,6 @@ class TestExtractGeneCds(unittest.TestCase):
 
     def test_single_cds_fragment_no_insertions_with_validation(self):
         """Single CDS fragment with successful validation"""
-        from curate_and_extract_coding_seqs import extract_gene_cds
-
         aligned_seq = "ATG---CGATCG---TAA"
         raw_seq = "NNNNATGCGATCGTAANNNN"  # Contains the CDS
         cds_fragments = [{'start': 1, 'end': 19}]
@@ -841,8 +1144,6 @@ class TestExtractGeneCds(unittest.TestCase):
 
     def test_single_cds_fragment_validation_failure(self):
         """Single CDS fragment with validation failure"""
-        from curate_and_extract_coding_seqs import extract_gene_cds
-
         aligned_seq = "ATG---CGATCG---TAA"
         raw_seq = "NNNNTTTGGGCCCAAANNNN"  # Does NOT contain the CDS
         cds_fragments = [{'start': 1, 'end': 19}]
@@ -862,8 +1163,6 @@ class TestExtractGeneCds(unittest.TestCase):
 
     def test_spliced_gene_both_fragments_valid(self):
         """Spliced gene with both fragments valid"""
-        from curate_and_extract_coding_seqs import extract_gene_cds
-
         # Fragment 1: positions 1-30
         # Fragment 2: positions 503-514
         aligned_seq = NEP_FRAGMENT1_PERGENE + ("N" * 472) + NEP_FRAGMENT2_PERGENE
@@ -886,8 +1185,6 @@ class TestExtractGeneCds(unittest.TestCase):
 
     def test_spliced_gene_first_fragment_invalid(self):
         """Spliced gene with first fragment validation failure"""
-        from curate_and_extract_coding_seqs import extract_gene_cds
-
         aligned_seq = NEP_FRAGMENT1_PERGENE + ("N" * 472) + NEP_FRAGMENT2_PERGENE
         raw_seq = "NNNNN" + NEP_FRAGMENT2_PERGENE  # Missing first fragment
         cds_fragments = [
@@ -909,8 +1206,6 @@ class TestExtractGeneCds(unittest.TestCase):
 
     def test_spliced_gene_second_fragment_invalid(self):
         """Spliced gene with second fragment validation failure"""
-        from curate_and_extract_coding_seqs import extract_gene_cds
-
         aligned_seq = NEP_FRAGMENT1_PERGENE + ("N" * 472) + NEP_FRAGMENT2_PERGENE
         raw_seq = NEP_FRAGMENT1_PERGENE + "NNNNN"  # Missing second fragment
         cds_fragments = [
@@ -932,8 +1227,6 @@ class TestExtractGeneCds(unittest.TestCase):
 
     def test_case_insensitive_validation(self):
         """Fragment validation should be case-insensitive"""
-        from curate_and_extract_coding_seqs import extract_gene_cds
-
         aligned_seq = "atg---cgatcg---taa"
         raw_seq = "NNNNATGCGATCGTAANNNN"  # Uppercase
         cds_fragments = [{'start': 1, 'end': 19}]
@@ -949,8 +1242,6 @@ class TestExtractGeneCds(unittest.TestCase):
 
     def test_codon_insertion_with_validation(self):
         """CDS with codon insertion should validate correctly"""
-        from curate_and_extract_coding_seqs import extract_gene_cds
-
         aligned_seq = "ATG---CGATCG---TAA"
         # After insertion at aligned position 12 (9th ungapped nucleotide 'G'):
         # Insert AAA after position 12: ATGCGATCGAAATAA (15 bp)
@@ -971,8 +1262,6 @@ class TestExtractGeneCds(unittest.TestCase):
 
     def test_raw_seq_none_raises_error(self):
         """Function should raise ValueError if raw_seq is None"""
-        from curate_and_extract_coding_seqs import extract_gene_cds
-
         aligned_seq = "ATG---CGATCG---TAA"
         cds_fragments = [{'start': 1, 'end': 19}]
         insertions_list = []
@@ -988,8 +1277,6 @@ class TestExtractGeneCds(unittest.TestCase):
 
     def test_spliced_gene_with_offset(self):
         """Test spliced gene (NEP-like) with coordinate transformation"""
-        from curate_and_extract_coding_seqs import extract_gene_cds
-
         # Realistic NS segment: CDS starts at position 27 in original reference
         # Fragment 1: original coords 27-56 (30bp)
         # Fragment 2: original coords 529-864 (336bp)
@@ -1020,8 +1307,6 @@ class TestExtractGeneCds(unittest.TestCase):
 
     def test_full_workflow_with_coordinate_transformation(self):
         """Integration test: full CDS extraction with coordinate transformation"""
-        from curate_and_extract_coding_seqs import extract_gene_cds
-
         # Simulate realistic scenario:
         # - Original reference has 5' UTR (positions 1-57)
         # - CDS at positions 58-264 in original reference (207bp)
@@ -1074,31 +1359,23 @@ class TestValidateCds(unittest.TestCase):
 
     def test_valid_cds_all_checks_pass(self):
         """Valid CDS with TAA stop codon"""
-        from curate_and_extract_coding_seqs import validate_cds
-
         result = validate_cds(VALID_CDS_PERGENE, "HA", "seq1", self.logger)
         self.assertTrue(result)
 
     def test_valid_cds_with_tag_stop(self):
         """Valid CDS with TAG stop codon"""
-        from curate_and_extract_coding_seqs import validate_cds
-
         cds = "ATGCGATCGTAG"
         result = validate_cds(cds, "HA", "seq1", self.logger)
         self.assertTrue(result)
 
     def test_valid_cds_with_tga_stop(self):
         """Valid CDS with TGA stop codon"""
-        from curate_and_extract_coding_seqs import validate_cds
-
         cds = "ATGCGATCGTGA"
         result = validate_cds(cds, "HA", "seq1", self.logger)
         self.assertTrue(result)
 
     def test_invalid_frame_remainder_one(self):
         """CDS with length not divisible by 3 (remainder 1)"""
-        from curate_and_extract_coding_seqs import validate_cds
-
         result = validate_cds(INVALID_FRAME_CDS_PERGENE, "HA", "seq1", self.logger)
 
         self.assertFalse(result)
@@ -1107,8 +1384,6 @@ class TestValidateCds(unittest.TestCase):
 
     def test_invalid_frame_remainder_two(self):
         """CDS with length not divisible by 3 (remainder 2)"""
-        from curate_and_extract_coding_seqs import validate_cds
-
         cds = "ATGCGATCGTAAGG"  # 14 bp
         result = validate_cds(cds, "HA", "seq1", self.logger)
 
@@ -1118,8 +1393,6 @@ class TestValidateCds(unittest.TestCase):
 
     def test_missing_start_codon(self):
         """CDS without ATG start codon"""
-        from curate_and_extract_coding_seqs import validate_cds
-
         cds = "TTGCGATCGTAA"
         result = validate_cds(cds, "HA", "seq1", self.logger)
 
@@ -1129,8 +1402,6 @@ class TestValidateCds(unittest.TestCase):
 
     def test_missing_stop_codon(self):
         """CDS without proper stop codon"""
-        from curate_and_extract_coding_seqs import validate_cds
-
         cds = "ATGCGATCGTTA"  # Ends with TTA, not a stop codon
         result = validate_cds(cds, "HA", "seq1", self.logger)
 
@@ -1140,8 +1411,6 @@ class TestValidateCds(unittest.TestCase):
 
     def test_too_short_sequence(self):
         """CDS too short (only start codon)"""
-        from curate_and_extract_coding_seqs import validate_cds
-
         cds = "ATG"
         result = validate_cds(cds, "HA", "seq1", self.logger)
 
@@ -1151,16 +1420,12 @@ class TestValidateCds(unittest.TestCase):
 
     def test_case_insensitive_validation(self):
         """Validation should be case-insensitive"""
-        from curate_and_extract_coding_seqs import validate_cds
-
         cds = "atgcgatcgtaa"  # Lowercase
         result = validate_cds(cds, "HA", "seq1", self.logger)
         self.assertTrue(result)
 
     def test_empty_sequence(self):
         """Empty sequence should fail validation"""
-        from curate_and_extract_coding_seqs import validate_cds
-
         cds = ""
         result = validate_cds(cds, "HA", "seq1", self.logger)
 
@@ -1170,8 +1435,6 @@ class TestValidateCds(unittest.TestCase):
 
     def test_logging_contains_gene_name_and_seq_id(self):
         """Log messages should include gene name and sequence ID"""
-        from curate_and_extract_coding_seqs import validate_cds
-
         result = validate_cds(INVALID_FRAME_CDS_PERGENE, "HA", "test_seq", self.logger)
 
         self.assertFalse(result)
