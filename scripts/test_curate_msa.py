@@ -13,7 +13,7 @@ from Bio import SeqIO
 # Import functions to test
 import sys
 sys.path.insert(0, os.path.dirname(__file__))
-from curate_msa import (
+from curate_and_extract_coding_seqs import (
     create_matching_gff_and_gtf,
     slice_record,
     get_ambiguous_chars,

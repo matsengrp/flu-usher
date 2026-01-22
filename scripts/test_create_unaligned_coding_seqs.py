@@ -15,7 +15,7 @@ from Bio import SeqIO
 # Import functions to test
 import sys
 sys.path.insert(0, os.path.dirname(__file__))
-from create_unaligned_coding_seqs import (
+from curate_and_extract_coding_seqs import (
     parse_insertions_from_tsv,
     remove_gaps,
     insert_nucleotides,
@@ -550,7 +550,7 @@ class TestFilterInsertionsForCds(unittest.TestCase):
 
     def test_no_insertions(self):
         """Empty insertion list should return empty list"""
-        from create_unaligned_coding_seqs import filter_insertions_for_cds
+        from curate_and_extract_coding_seqs import filter_insertions_for_cds
 
         insertions = []
         offset = 0  # No offset for this test
@@ -561,7 +561,7 @@ class TestFilterInsertionsForCds(unittest.TestCase):
 
     def test_single_codon_insertion_within_cds(self):
         """Insertion at position 50 within CDS 1-100"""
-        from create_unaligned_coding_seqs import filter_insertions_for_cds
+        from curate_and_extract_coding_seqs import filter_insertions_for_cds
 
         insertions = [(50, "AAA")]
         offset = 0  # Original coords = curated coords
@@ -572,7 +572,7 @@ class TestFilterInsertionsForCds(unittest.TestCase):
 
     def test_insertion_before_cds(self):
         """Insertion before CDS start should be filtered out"""
-        from create_unaligned_coding_seqs import filter_insertions_for_cds
+        from curate_and_extract_coding_seqs import filter_insertions_for_cds
 
         insertions = [(10, "GGG")]
         offset = 0
@@ -582,7 +582,7 @@ class TestFilterInsertionsForCds(unittest.TestCase):
 
     def test_insertion_after_cds(self):
         """Insertion after CDS end should be filtered out"""
-        from create_unaligned_coding_seqs import filter_insertions_for_cds
+        from curate_and_extract_coding_seqs import filter_insertions_for_cds
 
         insertions = [(200, "TTT")]
         offset = 0
@@ -592,7 +592,7 @@ class TestFilterInsertionsForCds(unittest.TestCase):
 
     def test_insertion_at_cds_start_boundary(self):
         """Insertion at CDS start boundary should be included"""
-        from create_unaligned_coding_seqs import filter_insertions_for_cds
+        from curate_and_extract_coding_seqs import filter_insertions_for_cds
 
         insertions = [(50, "CCC")]
         offset = 49  # offset = min_start - 1 = 50 - 1 = 49
@@ -603,7 +603,7 @@ class TestFilterInsertionsForCds(unittest.TestCase):
 
     def test_insertion_at_cds_end_boundary(self):
         """Insertion at position 149 (before end 150) should be included"""
-        from create_unaligned_coding_seqs import filter_insertions_for_cds
+        from curate_and_extract_coding_seqs import filter_insertions_for_cds
 
         insertions = [(149, "GGG")]
         offset = 49  # offset = 50 - 1 = 49
@@ -614,7 +614,7 @@ class TestFilterInsertionsForCds(unittest.TestCase):
 
     def test_multiple_codon_insertions_mixed(self):
         """Multiple insertions, some within CDS, some outside"""
-        from create_unaligned_coding_seqs import filter_insertions_for_cds
+        from curate_and_extract_coding_seqs import filter_insertions_for_cds
 
         insertions = [(200, "AAA"), (100, "GGG"), (60, "TTT"), (10, "CCC")]
         offset = 49  # offset = 50 - 1 = 49
@@ -627,7 +627,7 @@ class TestFilterInsertionsForCds(unittest.TestCase):
 
     def test_maintains_descending_order(self):
         """Output should maintain descending order"""
-        from create_unaligned_coding_seqs import filter_insertions_for_cds
+        from curate_and_extract_coding_seqs import filter_insertions_for_cds
 
         insertions = [(90, "AAA"), (60, "GGG"), (30, "TTT")]
         offset = 0  # No offset
@@ -640,7 +640,7 @@ class TestFilterInsertionsForCds(unittest.TestCase):
 
     def test_position_adjustment_calculation(self):
         """Position adjustment should transform from original to curated coords"""
-        from create_unaligned_coding_seqs import filter_insertions_for_cds
+        from curate_and_extract_coding_seqs import filter_insertions_for_cds
 
         insertions = [(150, "CCC")]
         offset = 99  # offset = 100 - 1 = 99
@@ -651,7 +651,7 @@ class TestFilterInsertionsForCds(unittest.TestCase):
 
     def test_realistic_ha_coordinates_with_offset(self):
         """Test with realistic HA coordinates (5' UTR causes offset)"""
-        from create_unaligned_coding_seqs import filter_insertions_for_cds
+        from curate_and_extract_coding_seqs import filter_insertions_for_cds
 
         # Realistic scenario: HA CDS starts at position 58, ends at 1708 in original ref
         # After curation, MSA is positions 1-1651
@@ -670,7 +670,7 @@ class TestFilterInsertionsForCds(unittest.TestCase):
 
     def test_insertion_at_boundaries_with_large_offset(self):
         """Test insertion filtering at boundaries with large offset"""
-        from create_unaligned_coding_seqs import filter_insertions_for_cds
+        from curate_and_extract_coding_seqs import filter_insertions_for_cds
 
         # Original CDS: 100-500, offset = 99
         # Curated CDS: 1-401
@@ -694,7 +694,7 @@ class TestFilterInsertionsForCds(unittest.TestCase):
 
     def test_zero_offset_no_transformation(self):
         """Test that zero offset doesn't break coordinate transformation"""
-        from create_unaligned_coding_seqs import filter_insertions_for_cds
+        from curate_and_extract_coding_seqs import filter_insertions_for_cds
 
         offset = 0
 
@@ -711,7 +711,7 @@ class TestExtractCdsFromAligned(unittest.TestCase):
 
     def test_extract_cds_from_middle(self):
         """Extract CDS from middle of aligned sequence in curated MSA"""
-        from create_unaligned_coding_seqs import extract_cds_from_aligned
+        from curate_and_extract_coding_seqs import extract_cds_from_aligned
 
         # Curated MSA already has non-coding regions removed
         # This represents the curated MSA (coding region only)
@@ -726,7 +726,7 @@ class TestExtractCdsFromAligned(unittest.TestCase):
 
     def test_extract_cds_from_beginning(self):
         """Extract CDS from beginning of sequence"""
-        from create_unaligned_coding_seqs import extract_cds_from_aligned
+        from curate_and_extract_coding_seqs import extract_cds_from_aligned
 
         aligned_seq = "ATG---CGATCG---TAANNNNNN"
         offset = 0  # CDS starts at position 1
@@ -737,7 +737,7 @@ class TestExtractCdsFromAligned(unittest.TestCase):
 
     def test_extract_cds_to_end(self):
         """Extract CDS to end of curated MSA sequence"""
-        from create_unaligned_coding_seqs import extract_cds_from_aligned
+        from curate_and_extract_coding_seqs import extract_cds_from_aligned
 
         # Curated MSA (coding region only)
         aligned_seq = "ATG---CGATCG---TAA"
@@ -751,7 +751,7 @@ class TestExtractCdsFromAligned(unittest.TestCase):
 
     def test_extract_entire_cds(self):
         """Extract entire sequence as CDS"""
-        from create_unaligned_coding_seqs import extract_cds_from_aligned
+        from curate_and_extract_coding_seqs import extract_cds_from_aligned
 
         aligned_seq = "ATG---CGATCG---TAA"
         offset = 0  # No offset
@@ -761,7 +761,7 @@ class TestExtractCdsFromAligned(unittest.TestCase):
 
     def test_extract_longer_cds_with_gaps(self):
         """Extract longer CDS with multiple gap regions"""
-        from create_unaligned_coding_seqs import extract_cds_from_aligned
+        from curate_and_extract_coding_seqs import extract_cds_from_aligned
 
         aligned_seq = "ATGCGA---TCG---AAACCG---TTCTAA"
         offset = 0  # No offset
@@ -772,7 +772,7 @@ class TestExtractCdsFromAligned(unittest.TestCase):
 
     def test_preserve_gaps_in_extraction(self):
         """Gaps should be preserved in extracted sequence"""
-        from create_unaligned_coding_seqs import extract_cds_from_aligned
+        from curate_and_extract_coding_seqs import extract_cds_from_aligned
 
         aligned_seq = "ATG------CGATCGTAA"
         offset = 0  # No offset
@@ -783,7 +783,7 @@ class TestExtractCdsFromAligned(unittest.TestCase):
 
     def test_zero_based_conversion(self):
         """1-based coordinates should be converted correctly to 0-based"""
-        from create_unaligned_coding_seqs import extract_cds_from_aligned
+        from curate_and_extract_coding_seqs import extract_cds_from_aligned
 
         aligned_seq = "ATGCGATCGTAA"
         offset = 0  # No offset
@@ -794,7 +794,7 @@ class TestExtractCdsFromAligned(unittest.TestCase):
 
     def test_extract_with_zero_offset(self):
         """Test extraction with zero offset (no coordinate transformation)"""
-        from create_unaligned_coding_seqs import extract_cds_from_aligned
+        from curate_and_extract_coding_seqs import extract_cds_from_aligned
 
         aligned_seq = "ATG---CGATCG---TAA"
         offset = 0
@@ -823,7 +823,7 @@ class TestExtractGeneCds(unittest.TestCase):
 
     def test_single_cds_fragment_no_insertions_with_validation(self):
         """Single CDS fragment with successful validation"""
-        from create_unaligned_coding_seqs import extract_gene_cds
+        from curate_and_extract_coding_seqs import extract_gene_cds
 
         aligned_seq = "ATG---CGATCG---TAA"
         raw_seq = "NNNNATGCGATCGTAANNNN"  # Contains the CDS
@@ -841,7 +841,7 @@ class TestExtractGeneCds(unittest.TestCase):
 
     def test_single_cds_fragment_validation_failure(self):
         """Single CDS fragment with validation failure"""
-        from create_unaligned_coding_seqs import extract_gene_cds
+        from curate_and_extract_coding_seqs import extract_gene_cds
 
         aligned_seq = "ATG---CGATCG---TAA"
         raw_seq = "NNNNTTTGGGCCCAAANNNN"  # Does NOT contain the CDS
@@ -862,7 +862,7 @@ class TestExtractGeneCds(unittest.TestCase):
 
     def test_spliced_gene_both_fragments_valid(self):
         """Spliced gene with both fragments valid"""
-        from create_unaligned_coding_seqs import extract_gene_cds
+        from curate_and_extract_coding_seqs import extract_gene_cds
 
         # Fragment 1: positions 1-30
         # Fragment 2: positions 503-514
@@ -886,7 +886,7 @@ class TestExtractGeneCds(unittest.TestCase):
 
     def test_spliced_gene_first_fragment_invalid(self):
         """Spliced gene with first fragment validation failure"""
-        from create_unaligned_coding_seqs import extract_gene_cds
+        from curate_and_extract_coding_seqs import extract_gene_cds
 
         aligned_seq = NEP_FRAGMENT1_PERGENE + ("N" * 472) + NEP_FRAGMENT2_PERGENE
         raw_seq = "NNNNN" + NEP_FRAGMENT2_PERGENE  # Missing first fragment
@@ -909,7 +909,7 @@ class TestExtractGeneCds(unittest.TestCase):
 
     def test_spliced_gene_second_fragment_invalid(self):
         """Spliced gene with second fragment validation failure"""
-        from create_unaligned_coding_seqs import extract_gene_cds
+        from curate_and_extract_coding_seqs import extract_gene_cds
 
         aligned_seq = NEP_FRAGMENT1_PERGENE + ("N" * 472) + NEP_FRAGMENT2_PERGENE
         raw_seq = NEP_FRAGMENT1_PERGENE + "NNNNN"  # Missing second fragment
@@ -932,7 +932,7 @@ class TestExtractGeneCds(unittest.TestCase):
 
     def test_case_insensitive_validation(self):
         """Fragment validation should be case-insensitive"""
-        from create_unaligned_coding_seqs import extract_gene_cds
+        from curate_and_extract_coding_seqs import extract_gene_cds
 
         aligned_seq = "atg---cgatcg---taa"
         raw_seq = "NNNNATGCGATCGTAANNNN"  # Uppercase
@@ -949,7 +949,7 @@ class TestExtractGeneCds(unittest.TestCase):
 
     def test_codon_insertion_with_validation(self):
         """CDS with codon insertion should validate correctly"""
-        from create_unaligned_coding_seqs import extract_gene_cds
+        from curate_and_extract_coding_seqs import extract_gene_cds
 
         aligned_seq = "ATG---CGATCG---TAA"
         # After insertion at aligned position 12 (9th ungapped nucleotide 'G'):
@@ -971,7 +971,7 @@ class TestExtractGeneCds(unittest.TestCase):
 
     def test_raw_seq_none_raises_error(self):
         """Function should raise ValueError if raw_seq is None"""
-        from create_unaligned_coding_seqs import extract_gene_cds
+        from curate_and_extract_coding_seqs import extract_gene_cds
 
         aligned_seq = "ATG---CGATCG---TAA"
         cds_fragments = [{'start': 1, 'end': 19}]
@@ -988,7 +988,7 @@ class TestExtractGeneCds(unittest.TestCase):
 
     def test_spliced_gene_with_offset(self):
         """Test spliced gene (NEP-like) with coordinate transformation"""
-        from create_unaligned_coding_seqs import extract_gene_cds
+        from curate_and_extract_coding_seqs import extract_gene_cds
 
         # Realistic NS segment: CDS starts at position 27 in original reference
         # Fragment 1: original coords 27-56 (30bp)
@@ -1020,7 +1020,7 @@ class TestExtractGeneCds(unittest.TestCase):
 
     def test_full_workflow_with_coordinate_transformation(self):
         """Integration test: full CDS extraction with coordinate transformation"""
-        from create_unaligned_coding_seqs import extract_gene_cds
+        from curate_and_extract_coding_seqs import extract_gene_cds
 
         # Simulate realistic scenario:
         # - Original reference has 5' UTR (positions 1-57)
@@ -1074,14 +1074,14 @@ class TestValidateCds(unittest.TestCase):
 
     def test_valid_cds_all_checks_pass(self):
         """Valid CDS with TAA stop codon"""
-        from create_unaligned_coding_seqs import validate_cds
+        from curate_and_extract_coding_seqs import validate_cds
 
         result = validate_cds(VALID_CDS_PERGENE, "HA", "seq1", self.logger)
         self.assertTrue(result)
 
     def test_valid_cds_with_tag_stop(self):
         """Valid CDS with TAG stop codon"""
-        from create_unaligned_coding_seqs import validate_cds
+        from curate_and_extract_coding_seqs import validate_cds
 
         cds = "ATGCGATCGTAG"
         result = validate_cds(cds, "HA", "seq1", self.logger)
@@ -1089,7 +1089,7 @@ class TestValidateCds(unittest.TestCase):
 
     def test_valid_cds_with_tga_stop(self):
         """Valid CDS with TGA stop codon"""
-        from create_unaligned_coding_seqs import validate_cds
+        from curate_and_extract_coding_seqs import validate_cds
 
         cds = "ATGCGATCGTGA"
         result = validate_cds(cds, "HA", "seq1", self.logger)
@@ -1097,7 +1097,7 @@ class TestValidateCds(unittest.TestCase):
 
     def test_invalid_frame_remainder_one(self):
         """CDS with length not divisible by 3 (remainder 1)"""
-        from create_unaligned_coding_seqs import validate_cds
+        from curate_and_extract_coding_seqs import validate_cds
 
         result = validate_cds(INVALID_FRAME_CDS_PERGENE, "HA", "seq1", self.logger)
 
@@ -1107,7 +1107,7 @@ class TestValidateCds(unittest.TestCase):
 
     def test_invalid_frame_remainder_two(self):
         """CDS with length not divisible by 3 (remainder 2)"""
-        from create_unaligned_coding_seqs import validate_cds
+        from curate_and_extract_coding_seqs import validate_cds
 
         cds = "ATGCGATCGTAAGG"  # 14 bp
         result = validate_cds(cds, "HA", "seq1", self.logger)
@@ -1118,7 +1118,7 @@ class TestValidateCds(unittest.TestCase):
 
     def test_missing_start_codon(self):
         """CDS without ATG start codon"""
-        from create_unaligned_coding_seqs import validate_cds
+        from curate_and_extract_coding_seqs import validate_cds
 
         cds = "TTGCGATCGTAA"
         result = validate_cds(cds, "HA", "seq1", self.logger)
@@ -1129,7 +1129,7 @@ class TestValidateCds(unittest.TestCase):
 
     def test_missing_stop_codon(self):
         """CDS without proper stop codon"""
-        from create_unaligned_coding_seqs import validate_cds
+        from curate_and_extract_coding_seqs import validate_cds
 
         cds = "ATGCGATCGTTA"  # Ends with TTA, not a stop codon
         result = validate_cds(cds, "HA", "seq1", self.logger)
@@ -1140,7 +1140,7 @@ class TestValidateCds(unittest.TestCase):
 
     def test_too_short_sequence(self):
         """CDS too short (only start codon)"""
-        from create_unaligned_coding_seqs import validate_cds
+        from curate_and_extract_coding_seqs import validate_cds
 
         cds = "ATG"
         result = validate_cds(cds, "HA", "seq1", self.logger)
@@ -1151,7 +1151,7 @@ class TestValidateCds(unittest.TestCase):
 
     def test_case_insensitive_validation(self):
         """Validation should be case-insensitive"""
-        from create_unaligned_coding_seqs import validate_cds
+        from curate_and_extract_coding_seqs import validate_cds
 
         cds = "atgcgatcgtaa"  # Lowercase
         result = validate_cds(cds, "HA", "seq1", self.logger)
@@ -1159,7 +1159,7 @@ class TestValidateCds(unittest.TestCase):
 
     def test_empty_sequence(self):
         """Empty sequence should fail validation"""
-        from create_unaligned_coding_seqs import validate_cds
+        from curate_and_extract_coding_seqs import validate_cds
 
         cds = ""
         result = validate_cds(cds, "HA", "seq1", self.logger)
@@ -1170,7 +1170,7 @@ class TestValidateCds(unittest.TestCase):
 
     def test_logging_contains_gene_name_and_seq_id(self):
         """Log messages should include gene name and sequence ID"""
-        from create_unaligned_coding_seqs import validate_cds
+        from curate_and_extract_coding_seqs import validate_cds
 
         result = validate_cds(INVALID_FRAME_CDS_PERGENE, "HA", "test_seq", self.logger)
 

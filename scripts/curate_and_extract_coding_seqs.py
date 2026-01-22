@@ -425,7 +425,7 @@ def extract_cds_from_aligned(aligned_seq, cds_start_original, cds_end_original, 
 
 
 def extract_gene_cds(aligned_seq, cds_fragments, insertions_list, seq_id, raw_seq,
-                     gene_name, offset, stats):
+                     gene_name, offset, logger, stats=None):
     """
     Extract complete CDS for a gene (handles spliced genes).
     Validates each fragment against raw sequence as it's extracted.
@@ -435,17 +435,22 @@ def extract_gene_cds(aligned_seq, cds_fragments, insertions_list, seq_id, raw_se
         cds_fragments: List of CDS feature dicts sorted by start position (original coords)
         insertions_list: List of (pos, nucs) for this sequence (original coords)
         seq_id: Sequence identifier
-        raw_seq: Raw (unaligned) sequence for validation
+        raw_seq: Raw (unaligned) sequence for validation (REQUIRED)
         gene_name: Gene name for logging
         offset: Offset to transform from original to curated coordinates (min_start - 1)
-        stats: Statistics dictionary to update
+        logger: Logger instance
+        stats: Statistics dictionary to update (optional, for tracking failures)
 
     Returns:
         tuple: (complete_cds, all_fragments_valid)
             - complete_cds: Unaligned CDS sequence (concatenated if spliced)
             - all_fragments_valid: True if all fragments validated against raw sequence
+
+    Raises:
+        ValueError: If raw_seq is None
     """
-    logger = logging.getLogger(__name__)
+    if raw_seq is None:
+        raise ValueError(f"{seq_id}|{gene_name}: raw_seq is required for validation")
 
     unaligned_fragments = []
     all_fragments_valid = True
@@ -473,7 +478,8 @@ def extract_gene_cds(aligned_seq, cds_fragments, insertions_list, seq_id, raw_se
         # Validate fragment against raw sequence
         if unaligned_cds.upper() not in raw_seq.upper():
             all_fragments_valid = False
-            stats['gene_validation_failures'][gene_name]['fragment_validation'] += 1
+            if stats is not None:
+                stats['gene_validation_failures'][gene_name]['fragment_validation'] += 1
             logger.debug(
                 f"{seq_id}|{gene_name} fragment {idx+1}: FAIL - "
                 f"Fragment not found in raw sequence"
@@ -488,7 +494,7 @@ def extract_gene_cds(aligned_seq, cds_fragments, insertions_list, seq_id, raw_se
     return complete_cds, all_fragments_valid
 
 
-def validate_cds(cds_seq, gene_name, seq_id, stats):
+def validate_cds(cds_seq, gene_name, seq_id, logger, stats=None):
     """
     Validate that CDS is biologically correct:
     1. Length is multiple of 3
@@ -498,43 +504,142 @@ def validate_cds(cds_seq, gene_name, seq_id, stats):
     Args:
         cds_seq: CDS sequence string
         gene_name: Gene name for tracking stats
-        seq_id: Sequence ID (for debugging only)
-        stats: Statistics dictionary to update
+        seq_id: Sequence ID for logging
+        logger: Logger instance
+        stats: Statistics dictionary to update (optional, for tracking failures)
 
     Returns:
         bool: True if valid, False otherwise
     """
-    logger = logging.getLogger(__name__)
     length = len(cds_seq)
 
     # Check length is multiple of 3
     if length % 3 != 0:
-        stats['gene_validation_failures'][gene_name]['wrong_length'] += 1
-        logger.debug(f"{seq_id}|{gene_name}: Length {length} not divisible by 3")
+        if stats is not None:
+            stats['gene_validation_failures'][gene_name]['wrong_length'] += 1
+        logger.warning(f"{seq_id}|{gene_name}: CDS length {length} not divisible by 3 (remainder: {length % 3}) - excluding from output")
         return False
 
     # Check minimum length
     if length < 6:
-        stats['gene_validation_failures'][gene_name]['too_short'] += 1
-        logger.debug(f"{seq_id}|{gene_name}: Length {length} too short")
+        if stats is not None:
+            stats['gene_validation_failures'][gene_name]['too_short'] += 1
+        logger.warning(f"{seq_id}|{gene_name}: CDS length {length} too short (minimum 6 bp for start + stop codon) - excluding from output")
         return False
 
     # Check starts with ATG
     cds_upper = cds_seq.upper()
     if not cds_upper.startswith('ATG'):
-        stats['gene_validation_failures'][gene_name]['missing_start_codon'] += 1
-        logger.debug(f"{seq_id}|{gene_name}: Does not start with ATG (starts with {cds_seq[:3]})")
+        if stats is not None:
+            stats['gene_validation_failures'][gene_name]['missing_start_codon'] += 1
+        logger.warning(f"{seq_id}|{gene_name}: CDS does not start with ATG (starts with {cds_seq[:3]}) - excluding from output")
         return False
 
     # Check ends with stop codon
     stop_codons = {'TAA', 'TAG', 'TGA'}
     last_codon = cds_upper[-3:]
     if last_codon not in stop_codons:
-        stats['gene_validation_failures'][gene_name]['missing_stop_codon'] += 1
-        logger.debug(f"{seq_id}|{gene_name}: Does not end with stop codon (ends with {last_codon})")
+        if stats is not None:
+            stats['gene_validation_failures'][gene_name]['missing_stop_codon'] += 1
+        logger.warning(f"{seq_id}|{gene_name}: CDS does not end with stop codon (ends with {last_codon}) - excluding from output")
         return False
 
     return True
+
+
+def filter_sequences(records, ambiguous_characters, max_frac_gaps, max_frac_ambig, logger,
+                     filter_duplicates=False, replace_gaps_with_ref=False):
+    """
+    Backward-compatible wrapper around filter_and_yield_sequences for tests.
+    Returns a list of filtered records.
+
+    Args:
+        records: List of SeqRecord objects
+        ambiguous_characters: Set of ambiguous characters
+        max_frac_gaps: Maximum fraction of gaps allowed
+        max_frac_ambig: Maximum fraction of ambiguous nucleotides allowed
+        logger: Logger object
+        filter_duplicates: Whether to filter out duplicate sequences
+        replace_gaps_with_ref: Whether to replace gaps with reference nucleotides
+
+    Returns:
+        List of filtered SeqRecord objects
+    """
+    filtered_records = []
+    for record, _ in filter_and_yield_sequences(
+        records, ambiguous_characters, max_frac_gaps, max_frac_ambig,
+        filter_duplicates, replace_gaps_with_ref
+    ):
+        filtered_records.append(record)
+    return filtered_records
+
+
+def validate_against_raw_sequences(unaligned_records, raw_sequences_file):
+    """
+    Validate that each unaligned coding sequence is a substring of the original raw sequence.
+    Backward-compatible function for tests.
+
+    Args:
+        unaligned_records: List of SeqRecord objects with unaligned coding sequences
+        raw_sequences_file: Path to original raw sequences file (xz compressed)
+
+    Returns:
+        tuple: (num_validated, num_failed)
+    """
+    logger = logging.getLogger(__name__)
+    logger.info(f"Validating unaligned sequences against original raw sequences from {raw_sequences_file}")
+
+    # Load raw sequences and create a dictionary
+    raw_seqs_dict = {}
+    with lzma.open(raw_sequences_file, 'rt') as handle:
+        for record in SeqIO.parse(handle, 'fasta'):
+            # Sanitize the ID to match curated sequences
+            sanitized_id = sanitize_id(record.id)
+            # Convert to uppercase for case-insensitive comparison
+            raw_seqs_dict[sanitized_id] = str(record.seq).upper()
+
+    logger.info(f"Loaded {len(raw_seqs_dict)} raw sequences")
+
+    # Validate each unaligned sequence
+    num_validated = 0
+    num_failed = 0
+    num_skipped_reference = 0
+
+    for idx, record in enumerate(unaligned_records):
+        seq_id = record.id
+        unaligned_seq = str(record.seq).upper()
+
+        if seq_id not in raw_seqs_dict:
+            # Skip only the first sequence (reference)
+            if idx == 0:
+                num_skipped_reference += 1
+                logger.info(f"{seq_id}: Skipping validation (reference sequence)")
+                continue
+            else:
+                # Raise error for any other missing sequence
+                logger.error(f"{seq_id}: Not found in raw sequences file")
+                raise ValueError(f"{seq_id}: Not found in raw sequences file")
+
+        raw_seq = raw_seqs_dict[seq_id]
+
+        # Check if unaligned coding sequence is a substring of raw sequence
+        if unaligned_seq in raw_seq:
+            num_validated += 1
+            logger.debug(f"{seq_id}: PASS - Unaligned coding sequence found in raw sequence")
+        else:
+            num_failed += 1
+            logger.error(f"{seq_id}: FAIL - Unaligned coding sequence NOT found in raw sequence")
+            logger.error(f"  Unaligned length: {len(unaligned_seq)}, Raw length: {len(raw_seq)}")
+
+    logger.info(f"Validation results:")
+    logger.info(f"  Validated: {num_validated}")
+    logger.info(f"  Failed: {num_failed}")
+    logger.info(f"  Skipped (reference): {num_skipped_reference}")
+
+    if num_failed > 0:
+        logger.error(f"VALIDATION FAILED: {num_failed} sequences are not substrings of their raw sequences")
+
+    return num_validated, num_failed
 
 
 def main():
@@ -689,11 +794,12 @@ def main():
                 raw_seq,
                 gene_name,
                 offset,
+                logger,
                 stats
             )
 
             # Validate biological correctness if fragments passed
-            if fragments_valid and validate_cds(cds_seq, gene_name, seq_id, stats):
+            if fragments_valid and validate_cds(cds_seq, gene_name, seq_id, logger, stats):
                 extracted_cds[gene_name] = cds_seq
             else:
                 all_genes_valid = False
