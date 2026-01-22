@@ -108,59 +108,44 @@ rule align_sequences:
             >& {log}
         """
 
-# Curate the alignment to only include sites in the CDS of the reference, and sanitize IDs
-# so that they do not include special characters that lead to errors in UShER jobs. Also
-# output new FASTA, GFF, and GTF files for the curated reference sequence.
-# --replace_gaps_with_ref
-rule curate_alignment:
+# Curate alignment and extract unaligned coding sequences in a single pass.
+# Filters sequences by quality metrics (gaps, ambiguous nucleotides, terminal gaps, duplicates)
+# and validates CDS for all genes. Sequences must pass ALL validations to be included.
+# Outputs curated MSA, reference files, and per-gene unaligned coding sequences.
+rule curate_and_extract_coding_seqs:
     input:
         alignment="results/{segment}/{subtype}/msa.fasta.xz",
-        gff="results/{segment}/{subtype}/reference/reference.gff"
+        gff="results/{segment}/{subtype}/reference/reference.gff",
+        tsv="results/{segment}/{subtype}/msa.tsv.xz",
+        raw_sequences="results/{segment}/{subtype}/raw_sequences.fasta.xz"
     output:
+        # Curated MSA and reference files
         curated_msa="results/{segment}/{subtype}/curated_msa.fasta.xz",
         curated_ref_fasta="results/{segment}/{subtype}/curated_reference.fasta",
         curated_ref_txt="results/{segment}/{subtype}/curated_reference.txt",
         curated_ref_gff="results/{segment}/{subtype}/curated_reference.gff",
-        curated_ref_gtf="results/{segment}/{subtype}/curated_reference.gtf"
+        curated_ref_gtf="results/{segment}/{subtype}/curated_reference.gtf",
+        # Per-gene unaligned coding sequences
+        coding_seqs_dir=directory("results/{segment}/{subtype}/unaligned_coding_seqs/")
     params:
         output_dir="results/{segment}/{subtype}",
+        output_coding_dir="results/{segment}/{subtype}/unaligned_coding_seqs",
         max_frac_gaps=config["max_frac_gaps"],
         max_frac_ambig=config["max_frac_ambig"]
     log:
-        "logs/{segment}/{subtype}/curate.log"
+        "logs/{segment}/{subtype}/curate_and_extract_coding_seqs.log"
     shell:
         """
-        python scripts/curate_msa.py \
+        python scripts/curate_and_extract_coding_seqs.py \
             --input {input.alignment} \
-            --output-dir {params.output_dir} \
             --gff {input.gff} \
+            --tsv {input.tsv} \
+            --raw-sequences {input.raw_sequences} \
+            --output-dir {params.output_dir} \
+            --output-coding-dir {params.output_coding_dir} \
             --max_frac_gaps {params.max_frac_gaps} \
             --max_frac_ambig {params.max_frac_ambig} \
             --filter_duplicates \
-            &> {log}
-        """
-
-# Create unaligned coding sequences from curated aligned sequences
-# by removing gaps and re-inserting nucleotides that were removed during alignment
-# Outputs separate FASTA files for each gene in the segment
-rule create_unaligned_coding_sequences:
-    input:
-        curated_msa="results/{segment}/{subtype}/curated_msa.fasta.xz",
-        tsv="results/{segment}/{subtype}/msa.tsv.xz",
-        gff="results/{segment}/{subtype}/reference/reference.gff",  # Use ORIGINAL GFF, not curated
-        raw_sequences="results/{segment}/{subtype}/raw_sequences.fasta.xz"
-    output:
-        directory("results/{segment}/{subtype}/unaligned_coding_seqs/")
-    log:
-        "logs/{segment}/{subtype}/create_unaligned_coding_seqs.log"
-    shell:
-        """
-        python scripts/create_unaligned_coding_seqs.py \
-            --curated-msa {input.curated_msa} \
-            --tsv {input.tsv} \
-            --gff {input.gff} \
-            --raw-sequences {input.raw_sequences} \
-            --output-dir {output} \
             &> {log}
         """
 
