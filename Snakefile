@@ -9,8 +9,8 @@ rule all:
         # Taxonium visualization trees for HA segments by subtype
         expand("results/HA/{subtype}/final_tree.jsonl.gz",
                subtype=config["ha_subtypes"]),
-        # Unaligned coding sequences for HA segments by subtype
-        expand("results/HA/{subtype}/curated_unaligned_coding_seqs.fasta.xz",
+        # Unaligned coding sequences for HA segments by subtype (per-gene output directories)
+        expand("results/HA/{subtype}/unaligned_coding_seqs/",
                subtype=config["ha_subtypes"]),
         # Host-specific Taxonium visualizations for HA segments by subtype
         expand("results/HA/{subtype}/host_specific_trees/{host_group}_tree.jsonl.gz",
@@ -19,8 +19,8 @@ rule all:
         # Taxonium visualization trees for NA segments by subtype
         expand("results/NA/{subtype}/final_tree.jsonl.gz",
                subtype=config["na_subtypes"]),
-        # Unaligned coding sequences for NA segments by subtype
-        expand("results/NA/{subtype}/curated_unaligned_coding_seqs.fasta.xz",
+        # Unaligned coding sequences for NA segments by subtype (per-gene output directories)
+        expand("results/NA/{subtype}/unaligned_coding_seqs/",
                subtype=config["na_subtypes"]),
         # Host-specific Taxonium visualizations for NA segments by subtype
         expand("results/NA/{subtype}/host_specific_trees/{host_group}_tree.jsonl.gz",
@@ -29,8 +29,8 @@ rule all:
         # Taxonium visualization trees for other segments (all subtypes combined)
         expand("results/{segment}/all/final_tree.jsonl.gz",
                segment=[s for s in config["segments"] if s not in ["HA", "NA"]]),
-        # Unaligned coding sequences for other segments (all subtypes combined)
-        expand("results/{segment}/all/curated_unaligned_coding_seqs.fasta.xz",
+        # Unaligned coding sequences for other segments (all subtypes combined, per-gene output directories)
+        expand("results/{segment}/all/unaligned_coding_seqs/",
                segment=[s for s in config["segments"] if s not in ["HA", "NA"]]),
         # Host-specific Taxonium visualizations for other segments (all subtypes combined)
         expand("results/{segment}/all/host_specific_trees/{host_group}_tree.jsonl.gz",
@@ -101,64 +101,51 @@ rule align_sequences:
         nextclade run {input.sequences} \
             --input-dataset {input.dataset_dir} \
             --include-reference \
+            --penalty-gap-open-out-of-frame 16 \
             --jobs {threads} \
             --output-fasta {output.alignment} \
             --output-tsv {output.tsv} \
             >& {log}
         """
 
-# Curate the alignment to only include sites in the CDS of the reference, and sanitize IDs
-# so that they do not include special characters that lead to errors in UShER jobs. Also
-# output new FASTA, GFF, and GTF files for the curated reference sequence.
-# --replace_gaps_with_ref
-rule curate_alignment:
+# Curate alignment and extract unaligned coding sequences in a single pass.
+# Filters sequences by quality metrics (gaps, ambiguous nucleotides, terminal gaps, duplicates)
+# and validates CDS for all genes. Sequences must pass ALL validations to be included.
+# Outputs curated MSA, reference files, and per-gene unaligned coding sequences.
+rule curate_and_extract_coding_seqs:
     input:
         alignment="results/{segment}/{subtype}/msa.fasta.xz",
-        gff="results/{segment}/{subtype}/reference/reference.gff"
+        gff="results/{segment}/{subtype}/reference/reference.gff",
+        tsv="results/{segment}/{subtype}/msa.tsv.xz",
+        raw_sequences="results/{segment}/{subtype}/raw_sequences.fasta.xz"
     output:
+        # Curated MSA and reference files
         curated_msa="results/{segment}/{subtype}/curated_msa.fasta.xz",
         curated_ref_fasta="results/{segment}/{subtype}/curated_reference.fasta",
         curated_ref_txt="results/{segment}/{subtype}/curated_reference.txt",
         curated_ref_gff="results/{segment}/{subtype}/curated_reference.gff",
-        curated_ref_gtf="results/{segment}/{subtype}/curated_reference.gtf"
+        curated_ref_gtf="results/{segment}/{subtype}/curated_reference.gtf",
+        # Per-gene unaligned coding sequences
+        coding_seqs_dir=directory("results/{segment}/{subtype}/unaligned_coding_seqs/")
     params:
         output_dir="results/{segment}/{subtype}",
+        output_coding_dir="results/{segment}/{subtype}/unaligned_coding_seqs",
         max_frac_gaps=config["max_frac_gaps"],
         max_frac_ambig=config["max_frac_ambig"]
     log:
-        "logs/{segment}/{subtype}/curate.log"
+        "logs/{segment}/{subtype}/curate_and_extract_coding_seqs.log"
     shell:
         """
-        python scripts/curate_msa.py \
+        python scripts/curate_and_extract_coding_seqs.py \
             --input {input.alignment} \
-            --output-dir {params.output_dir} \
             --gff {input.gff} \
+            --tsv {input.tsv} \
+            --raw-sequences {input.raw_sequences} \
+            --output-dir {params.output_dir} \
+            --output-coding-dir {params.output_coding_dir} \
             --max_frac_gaps {params.max_frac_gaps} \
             --max_frac_ambig {params.max_frac_ambig} \
             --filter_duplicates \
-            &> {log}
-        """
-
-# Create unaligned coding sequences from curated aligned sequences
-# by removing gaps and re-inserting nucleotides that were removed during alignment
-rule create_unaligned_coding_sequences:
-    input:
-        curated_msa="results/{segment}/{subtype}/curated_msa.fasta.xz",
-        tsv="results/{segment}/{subtype}/msa.tsv.xz",
-        gff="results/{segment}/{subtype}/reference/reference.gff",
-        raw_sequences="results/{segment}/{subtype}/raw_sequences.fasta.xz"
-    output:
-        "results/{segment}/{subtype}/curated_unaligned_coding_seqs.fasta.xz"
-    log:
-        "logs/{segment}/{subtype}/create_unaligned_coding_seqs.log"
-    shell:
-        """
-        python scripts/create_unaligned_coding_seqs.py \
-            --curated-msa {input.curated_msa} \
-            --tsv {input.tsv} \
-            --gff {input.gff} \
-            --raw-sequences {input.raw_sequences} \
-            --output {output} \
             &> {log}
         """
 

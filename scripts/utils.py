@@ -176,3 +176,51 @@ def extract_all_genes_and_cds(gff_file):
 
     logger.info(f"Found {len(features)} features spanning {min_start}-{max_end}")
     return features, (min_start, max_end)
+
+
+def group_cds_by_gene(features):
+    """
+    Group CDS features by their protein ID for handling spliced genes.
+
+    Spliced genes (like NEP) have multiple CDS features with the same protein_id.
+    This function groups them together so they can be concatenated properly.
+
+    Args:
+        features: List of feature dicts from extract_all_genes_and_cds()
+
+    Returns:
+        dict: {key: {'gene_name': str, 'protein_id': str, 'cds_list': [sorted CDS features]}}
+              where key is protein_id if available, otherwise gene_name
+    """
+    logger = logging.getLogger(__name__)
+
+    # Filter to only CDS features
+    cds_features = [f for f in features if f['type'].lower() == 'cds']
+
+    genes = {}
+
+    for cds in cds_features:
+        # Extract gene name and protein_id from attributes
+        gene_name = extract_attribute_value(cds['attributes'], 'gene') or cds['name']
+        protein_id = extract_attribute_value(cds['attributes'], 'protein_id')
+
+        # Use protein_id as key to group spliced CDS (same protein_id = same gene)
+        # Fall back to gene_name if protein_id is not available
+        key = protein_id if protein_id else gene_name
+
+        if key not in genes:
+            genes[key] = {
+                'gene_name': gene_name,
+                'protein_id': protein_id,
+                'cds_list': []
+            }
+        genes[key]['cds_list'].append(cds)
+
+    # Sort CDS features by start position for each gene
+    # This ensures spliced genes are concatenated in the correct order
+    for gene_data in genes.values():
+        gene_data['cds_list'].sort(key=lambda x: x['start'])
+
+    logger.debug(f"Grouped {len(cds_features)} CDS features into {len(genes)} genes")
+
+    return genes
