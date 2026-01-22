@@ -31,8 +31,7 @@ flu-usher/
 ├── scripts/
 │   ├── parse_gisaid_data.py                        # Parse GISAID data by segment
 │   ├── download_ref_seq.py                         # Download reference sequences
-│   ├── curate_msa.py                               # Curate and filter alignments
-│   ├── create_unaligned_coding_seqs.py             # Extract unaligned coding sequences
+│   ├── curate_and_extract_coding_seqs.py           # Curate alignments and extract coding sequences
 │   ├── randomize_alignment.py                      # Randomize alignment order
 │   ├── trim_dag.py                                 # Trim suboptimal trees from DAG
 │   ├── convert_DAG_protobuf_to_newick_samples.py   # Sample tree from DAG
@@ -140,69 +139,67 @@ flu-usher/
    - Includes reference in the output alignment
    - Generates alignment metadata TSV
 
-4. **Curate alignment** (`curate_msa.py`):
+4. **Curate alignment and extract coding sequences** (`curate_and_extract_coding_seqs.py`):
    - Filters sequences by quality (gaps, ambiguities)
    - Extracts only coding regions based on GFF annotations
    - Sanitizes sequence IDs for UShER compatibility
    - Filters duplicate sequences
-
-5. **Create unaligned coding sequences** (`create_unaligned_coding_seqs.py`):
    - Extracts unaligned coding sequences from curated alignment
    - Preserves original nucleotides removed during alignment
 
-6. **Randomize alignment** (`randomize_alignment.py`):
+5. **Randomize alignment** (`randomize_alignment.py`):
    - Creates multiple randomized versions of the alignment (keeping reference at top)
    - Each randomization uses a different seed for variation in tree building
 
-7. **Create VCF** (faToVcf):
+6. **Create VCF** (faToVcf):
    - Converts each randomized FASTA alignment to variant format
    - Includes reference and handles ambiguous nucleotides
 
-8. **Build initial tree** (usher-sampled):
+7. **Build initial tree** (usher-sampled):
    - Creates parsimony-based phylogenetic tree for each randomization
    - Uses empty starting tree and builds incrementally
 
-9. **Optimize tree** (matOptimize):
+8. **Optimize tree** (matOptimize):
    - Refines tree topology to minimize parsimony score for each randomization
    - Multiple optimization rounds to improve tree quality
 
-10. **Convert to DAG** (larch-usher):
-    - Converts each optimized tree to a DAG (Directed Acyclic Graph) representation
-    - Allows for representing multiple equally parsimonious tree topologies
+9. **Convert to DAG** (larch-usher):
+   - Converts each optimized tree to a DAG (Directed Acyclic Graph) representation
+   - Allows for representing multiple equally parsimonious tree topologies
 
-11. **Merge DAGs** (larch-dagutil):
+10. **Merge DAGs** (larch-dagutil):
     - Combines DAGs from all randomizations into a single merged DAG
     - Trims redundant structures during merge
 
-12. **Trim DAG** (`trim_dag.py`):
+11. **Trim DAG** (`trim_dag.py`):
     - Removes suboptimal trees from the merged DAG
     - Retains only the most parsimonious tree topologies
 
-13. **Sample tree from DAG** (`convert_DAG_protobuf_to_newick_samples.py`):
+12. **Sample tree from DAG** (`convert_DAG_protobuf_to_newick_samples.py`):
     - Samples a representative tree from the trimmed DAG
     - Outputs in Newick format
 
-14. **Create MAT protobuf** (matOptimize):
+13. **Create MAT protobuf** (matOptimize):
     - Converts the sampled Newick tree to MAT protobuf format
     - Required for downstream matUtils operations
 
-15. **Reroot tree** (matUtils extract):
+14. **Reroot tree** (matUtils extract):
     - Reroots the tree at a specified node if configured
     - Otherwise creates a symlink to the sampled tree
 
-16. **Create root sequence** (`extract_root_sequence.py` or symlink):
+15. **Create root sequence** (`extract_root_sequence.py` or symlink):
     - If rerooted: Infers root sequence from tree mutations
     - If not rerooted: Uses reference sequence as root
 
-17. **Add host groups** (`add_host_groups.py`):
+16. **Add host groups** (`add_host_groups.py`):
     - Classifies hosts into taxonomic groups (e.g., avian, mammalian)
     - Adds host_group column to metadata
 
-18. **Extract host-specific subtrees** (matUtils extract):
+17. **Extract host-specific subtrees** (matUtils extract):
     - Creates separate subtrees for each host group
     - Includes all samples from the specified host group plus the root
 
-19. **Create visualizations** (usher_to_taxonium):
+18. **Create visualizations** (usher_to_taxonium):
     - Converts final tree and host-specific subtrees to Taxonium format
     - Incorporates metadata for interactive exploration
 
