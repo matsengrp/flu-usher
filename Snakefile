@@ -101,6 +101,7 @@ rule align_sequences:
         nextclade run {input.sequences} \
             --input-dataset {input.dataset_dir} \
             --include-reference \
+            --penalty-gap-open-out-of-frame 16 \
             --jobs {threads} \
             --output-fasta {output.alignment} \
             --output-tsv {output.tsv} \
