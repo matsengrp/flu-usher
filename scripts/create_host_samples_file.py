@@ -2,6 +2,7 @@
 Create a samples file for matUtils extract filtered by host group.
 """
 import argparse
+import lzma
 import sys
 from Bio import SeqIO
 import pandas as pd
@@ -31,8 +32,9 @@ def main():
     # Extract all sample IDs from curated MSA (these are samples in the tree)
     print(f"Reading curated MSA from {args.curated_msa}")
     msa_sample_ids = set()
-    for record in SeqIO.parse(args.curated_msa, 'fasta'):
-        msa_sample_ids.add(record.id)
+    with lzma.open(args.curated_msa, 'rt') as f:
+        for record in SeqIO.parse(f, 'fasta'):
+            msa_sample_ids.add(record.id)
     print(f"Found {len(msa_sample_ids)} samples in curated MSA")
 
     # Read metadata
