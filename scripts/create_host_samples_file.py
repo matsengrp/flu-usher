@@ -30,10 +30,15 @@ def main():
     print(f"Root sequence: {root_name}")
 
     # Extract all sample IDs from curated MSA (these are samples in the tree)
+    # The first sequence is the reference and won't be in metadata
     print(f"Reading curated MSA from {args.curated_msa}")
     msa_sample_ids = set()
+    reference_id = None
     with lzma.open(args.curated_msa, 'rt') as f:
-        for record in SeqIO.parse(f, 'fasta'):
+        for i, record in enumerate(SeqIO.parse(f, 'fasta')):
+            if i == 0:
+                reference_id = record.id
+                print(f"Reference sequence (first in MSA): {reference_id}")
             msa_sample_ids.add(record.id)
     print(f"Found {len(msa_sample_ids)} samples in curated MSA")
 
@@ -42,9 +47,9 @@ def main():
     df = pd.read_csv(args.metadata)
     print(f"Metadata contains {len(df)} rows")
 
-    # Verify all MSA samples are present in metadata
+    # Verify all MSA samples (except reference) are present in metadata
     metadata_ids = set(df['isolate_id'])
-    missing_in_metadata = msa_sample_ids - metadata_ids
+    missing_in_metadata = msa_sample_ids - metadata_ids - {reference_id}
     if missing_in_metadata:
         print(f"ERROR: {len(missing_in_metadata)} samples in MSA are missing from metadata",
               file=sys.stderr)
@@ -66,7 +71,8 @@ def main():
         print("Output will contain only the root sequence", file=sys.stderr)
 
     # Sort for reproducibility (excluding root which goes first)
-    sorted_samples = sorted(host_sample_ids)
+    # Remove root from host_sample_ids to avoid writing it twice
+    sorted_samples = sorted(host_sample_ids - {root_name})
 
     # Write samples file: root first, then sorted host-group samples
     with open(args.output, 'w') as f:
