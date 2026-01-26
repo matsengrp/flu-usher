@@ -7,8 +7,7 @@ A Snakemake pipeline for building phylogenetic trees of influenza virus sequence
 ```
 flu-usher/
 ├── Snakefile                # Main pipeline file
-├── config/
-│   └── config.yaml          # Configuration file
+├── config.yaml              # Configuration file
 ├── data/                    # Input data directories
 │   ├── H1N1/                # Example: H1N1 sequences (all segments)
 │   ├── H3N2/                # Example: H3N2 sequences (all segments)
@@ -56,7 +55,7 @@ flu-usher/
 
 2. **Configure the pipeline**
 
-   Edit `config/config.yaml` to:
+   Edit `config.yaml` to:
    - Specify input directories containing your GISAID data
    - List HA subtypes to analyze (e.g., H1, H3, H5, H7, H9)
    - List NA subtypes to analyze (e.g., N1, N2, N9)

@@ -1,6 +1,6 @@
 # Snakemake pipeline for flu-usher
 import glob
-configfile: "config/config.yaml"
+configfile: "config.yaml"
 
 
 # Define the final outputs that should be created for each segment-subtype combination

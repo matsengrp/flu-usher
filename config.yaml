@@ -58,12 +58,12 @@ references:
   "HA_H5": "NC_007362.1" # A/goose/Guangdong/1/1996
   "HA_H7": "NC_026425.1" # A/Shanghai/02/2013
   "HA_H9": "NC_004908.1" # A/Hong Kong/1073/99
-  
+
   # NA references by subtype
   "NA_N1": "NC_002018.1" # A/Puerto Rico/8/1934
   "NA_N2": "CY121119.1" # A/Aichi/2/1968
   "NA_N9": "NC_026429.1" # A/Shanghai/02/2013
-  
+
   # Other segments (using H3N2 A/Aichi/2/1968 as reference for all)
   "PB2_all": "CY121124.1"
   "PB1_all": "CY121123.1"
