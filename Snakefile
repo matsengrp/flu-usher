@@ -103,7 +103,6 @@ rule download_all_references:
 rule align_sequences:
     input:
         sequences="results/{segment}/{subtype}/raw_sequences.fasta.xz",
-        dataset_dir="results/{segment}/{subtype}/reference/",
         reference_gff="results/{segment}/{subtype}/reference/reference.gff",
         reference_fasta="results/{segment}/{subtype}/reference/reference.fasta",
         reference_json="results/{segment}/{subtype}/reference/pathogen.json"
@@ -113,10 +112,12 @@ rule align_sequences:
     threads: config["threads"]
     log:
         "logs/{segment}/{subtype}/nextclade.log"
+    params:
+        dataset_dir="results/{segment}/{subtype}/reference/"
     shell:
         """
         nextclade run {input.sequences} \
-            --input-dataset {input.dataset_dir} \
+            --input-dataset {params.dataset_dir} \
             --include-reference \
             --penalty-gap-open-out-of-frame 16 \
             --jobs {threads} \
