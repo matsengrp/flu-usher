@@ -91,6 +91,12 @@ reroot:
   "HA_H3": "EPI_ISL_18852459"
   "HA_H5": "EPI_ISL_5886"
   "HA_H7": "EPI_ISL_10304"
+  "PB2_all": "EPI_ISL_5886"
+  "PB1_all": "EPI_ISL_5886"
+  "PA_all": "EPI_ISL_5886"
+  "NP_all": "EPI_ISL_5886"
+  "MP_all": "EPI_ISL_5886"
+  "NS_all": "EPI_ISL_5886"
 
 # Host-specific subtree extraction
 host_groups_to_extract:
