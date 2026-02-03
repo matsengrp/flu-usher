@@ -517,14 +517,12 @@ def validate_cds(cds_seq, gene_name, seq_id, logger, stats=None):
     if length % 3 != 0:
         if stats is not None:
             stats['gene_validation_failures'][gene_name]['wrong_length'] += 1
-        logger.warning(f"{seq_id}|{gene_name}: CDS length {length} not divisible by 3 (remainder: {length % 3}) - excluding from output")
         return False
 
     # Check minimum length
     if length < 6:
         if stats is not None:
             stats['gene_validation_failures'][gene_name]['too_short'] += 1
-        logger.warning(f"{seq_id}|{gene_name}: CDS length {length} too short (minimum 6 bp for start + stop codon) - excluding from output")
         return False
 
     # Check starts with ATG
@@ -532,7 +530,6 @@ def validate_cds(cds_seq, gene_name, seq_id, logger, stats=None):
     if not cds_upper.startswith('ATG'):
         if stats is not None:
             stats['gene_validation_failures'][gene_name]['missing_start_codon'] += 1
-        logger.warning(f"{seq_id}|{gene_name}: CDS does not start with ATG (starts with {cds_seq[:3]}) - excluding from output")
         return False
 
     # Check ends with stop codon
@@ -541,7 +538,6 @@ def validate_cds(cds_seq, gene_name, seq_id, logger, stats=None):
     if last_codon not in stop_codons:
         if stats is not None:
             stats['gene_validation_failures'][gene_name]['missing_stop_codon'] += 1
-        logger.warning(f"{seq_id}|{gene_name}: CDS does not end with stop codon (ends with {last_codon}) - excluding from output")
         return False
 
     return True
