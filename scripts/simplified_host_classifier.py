@@ -2,7 +2,7 @@ import pandas as pd
 
 def get_simplified_host_group(host):
     if pd.isna(host):
-        return 'unknown'
+        return 'other'
 
     host = host.lower()
 
@@ -11,11 +11,11 @@ def get_simplified_host_group(host):
         'host', 'mammals', 'other mammals', 'feces', 'environment', 'water sample', 'other environment',
         'animal', 'surface swab', 'air sample', 'unknown', 'insect'
     ]:
-        return 'unknown'
+        return 'other'
 
     # Laboratory derived
     if 'laboratory' in host:
-        return 'laboratory'
+        return 'other'
 
     # Human
     if host in ['human']:
@@ -29,7 +29,7 @@ def get_simplified_host_group(host):
     
     # Equine
     if host in ['equine', 'equus caballus', 'horse', 'donkey']:
-        return 'equine'
+        return 'other'
 
     # Bovine
     if host in ['dairy cow', 'bovine', 'cow', 'cattle']:
@@ -37,26 +37,26 @@ def get_simplified_host_group(host):
 
     # Canine
     if host in ['canine', 'dog']:
-        return 'canine'
+        return 'other'
     if 'canis' in host:
-        return 'canine'
+        return 'other'
 
     # Feline
     if host in ['feline', 'cat']:
-        return 'feline'
+        return 'other'
     if 'felis' in host:
-        return 'feline'
+        return 'other'
 
     # Marine mammals
     if host in ['seal', 'dolphin', 'whale', 'sea lion', 'walrus']:
-        return 'marine_mammal'
+        return 'other'
 
     # Other mammals
     if host in [
         'ferret', 'mink', 'mouse', 'mus musculus', 'rodent', 'bat', 'meerkat', 'panda', 'camel',
         'primate'
     ]:
-        return 'other_mammal'
+        return 'other'
 
     # ===== AVIAN CLASSIFICATION =====
     # All bird-related hosts should be classified as 'avian'
@@ -100,5 +100,5 @@ def get_simplified_host_group(host):
         if genus == host.split()[0]:
             return 'avian'
 
-    # Return the original host if not classified
-    return host
+    # Raise error for unrecognized hosts
+    raise ValueError(f"Unrecognized host: {host}")
