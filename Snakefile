@@ -62,23 +62,40 @@ rule parse_gisaid_data:
             &> {log}
         """
 
-# Download the reference sequence and corresponding GFF, create a Nextclade pathogen.json file,
-# and save these files in the same directory as input to Nextclade
-rule download_reference:
+# Download all reference sequences sequentially with fixed wait time between downloads
+# This prevents NCBI rate limiting and provides predictable runtime
+rule download_all_references:
     output:
-        directory("results/{segment}/{subtype}/reference/"),
-        gff="results/{segment}/{subtype}/reference/reference.gff",
-        fasta="results/{segment}/{subtype}/reference/reference.fasta",
-        json="results/{segment}/{subtype}/reference/pathogen.json"
+        # Explicitly list all expected outputs for Snakemake dependency tracking
+        fastas=expand("results/HA/{subtype}/reference/reference.fasta",
+                     subtype=config["ha_subtypes"]) + \
+              expand("results/NA/{subtype}/reference/reference.fasta",
+                     subtype=config["na_subtypes"]) + \
+              expand("results/{segment}/all/reference/reference.fasta",
+                     segment=[s for s in config["segments"] if s not in ["HA", "NA"]]),
+        gffs=expand("results/HA/{subtype}/reference/reference.gff",
+                   subtype=config["ha_subtypes"]) + \
+             expand("results/NA/{subtype}/reference/reference.gff",
+                    subtype=config["na_subtypes"]) + \
+             expand("results/{segment}/all/reference/reference.gff",
+                    segment=[s for s in config["segments"] if s not in ["HA", "NA"]]),
+        jsons=expand("results/HA/{subtype}/reference/pathogen.json",
+                    subtype=config["ha_subtypes"]) + \
+              expand("results/NA/{subtype}/reference/pathogen.json",
+                     subtype=config["na_subtypes"]) + \
+              expand("results/{segment}/all/reference/pathogen.json",
+                     segment=[s for s in config["segments"] if s not in ["HA", "NA"]])
     params:
-        accession=lambda wildcards: config["references"][f"{wildcards.segment}_{wildcards.subtype}"]
+        config_file="config.yaml",
+        wait_time=30
     log:
-        "logs/{segment}/{subtype}/download_reference.log"
+        "logs/download_all_references.log"
     shell:
         """
         python scripts/download_ref_seq.py \
-            --accession {params.accession} \
-            --output-dir {output[0]} \
+            --config {params.config_file} \
+            --output-base-dir results \
+            --wait-time {params.wait_time} \
             &> {log}
         """
 
