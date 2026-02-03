@@ -449,7 +449,7 @@ rule create_host_samples_file:
             &> {log}
         """
 
-# Extract host-specific subtree using matUtils
+# Extract host-specific subtree using matUtils, collapsing trees before outputting
 rule extract_host_subtree:
     input:
         tree="results/{segment}/{subtype}/final_tree.pb.gz",
@@ -463,6 +463,7 @@ rule extract_host_subtree:
         matUtils extract \
             -i {input.tree} \
             -s {input.samples} \
+            -O \
             -o {output} \
             &> {log}
         """
