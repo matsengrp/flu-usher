@@ -83,14 +83,18 @@ max_parsimony: 20
 n_randomizations: 10
 
 # Tree rerooting configuration
-# Specify which segment-subtype combinations should have their trees rerooted
+# Strategy: Use early avian sequences to root trees
 # Format: "SEGMENT_SUBTYPE": "new_root_node"
 # Combinations not listed here will not be rerooted
 reroot:
-  "HA_H1": "EPI_ISL_19703744"
+  "HA_H1": "EPI_ISL_5897"
   "HA_H3": "EPI_ISL_18852459"
   "HA_H5": "EPI_ISL_5886"
   "HA_H7": "EPI_ISL_10304"
+  "HA_H9": "EPI_ISL_3214"
+  "NA_N1": "EPI_ISL_5878"
+  "NA_N2": "EPI_ISL_8017"
+  "NA_N9": "EPI_ISL_87301"
   "PB2_all": "EPI_ISL_5886"
   "PB1_all": "EPI_ISL_5886"
   "PA_all": "EPI_ISL_5886"
