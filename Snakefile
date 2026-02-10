@@ -431,8 +431,6 @@ rule create_root_fasta:
             """)
 
 
-# TODO condense trees before feeding them to taxonium
-
 # Add host group classifications to combined metadata
 rule add_host_groups:
     input:
@@ -443,7 +441,7 @@ rule add_host_groups:
         "logs/add_host_groups.log"
     shell:
         """
-        python scripts/add_host_groups.py {input.metadata} {output} 2> {log}
+        python scripts/simplified_host_classifier.py {input.metadata} {output} 2> {log}
         """
 
 # Create samples file for host-specific subtree extraction

@@ -36,7 +36,7 @@ flu-usher/
 │   ├── convert_DAG_protobuf_to_newick_samples.py   # Sample tree from DAG
 │   ├── create_root_samples_file.py                 # Create samples file for root extraction
 │   ├── extract_root_sequence.py                    # Infer root sequence from tree
-│   ├── add_host_groups.py                          # Classify hosts into groups
+│   ├── simplified_host_classifier.py               # Classify hosts into groups
 │   └── create_host_samples_file.py                 # Create samples file for host extraction
 └── notebooks/               # Jupyter notebooks for development and analysis
 ```
@@ -190,8 +190,8 @@ flu-usher/
     - If rerooted: Infers root sequence from tree mutations
     - If not rerooted: Uses reference sequence as root
 
-16. **Add host groups** (`add_host_groups.py`):
-    - Classifies hosts into taxonomic groups (e.g., avian, mammalian)
+16. **Add host groups** (`simplified_host_classifier.py`):
+    - Classifies hosts into simplified groups (human, swine, bovine, avian, other)
     - Adds host_group column to metadata
 
 17. **Extract host-specific subtrees** (matUtils extract):
