@@ -35,7 +35,10 @@ rule all:
         # Host-specific Taxonium visualizations for other segments (all subtypes combined)
         expand("results/{segment}/all/host_specific_trees/{host_group}_tree.jsonl.gz",
                segment=[s for s in config["segments"] if s not in ["HA", "NA"]],
-               host_group=config["host_groups_to_extract"])
+               host_group=config["host_groups_to_extract"]),
+        # Executed analysis notebooks
+        "results/notebooks/analyze_metadata.html",
+        "results/notebooks/analyze_alignments.html"
 
 # Parse GISAID data files from all input directories at once
 rule parse_gisaid_data:
@@ -521,5 +524,33 @@ rule convert_host_subtree_to_taxonium:
             --key_column isolate_id \
             --columns isolate_name,subtype,clade,passage_history,location,host,host_group,collection_date \
             --output {output} \
+            &> {log}
+        """
+
+# Execute analysis notebooks and generate HTML reports
+rule execute_notebooks:
+    input:
+        notebook="notebooks/{notebook}.ipynb",
+        # Ensure all main pipeline outputs are complete before running notebooks
+        metadata="results/combined_metadata_with_host_groups.csv",
+        ha_trees=expand("results/HA/{subtype}/final_tree.jsonl.gz",
+                       subtype=config["ha_subtypes"]),
+        na_trees=expand("results/NA/{subtype}/final_tree.jsonl.gz",
+                       subtype=config["na_subtypes"]),
+        other_trees=expand("results/{segment}/all/final_tree.jsonl.gz",
+                          segment=[s for s in config["segments"] if s not in ["HA", "NA"]])
+    output:
+        "results/notebooks/{notebook}.html"
+    log:
+        "logs/notebooks/{notebook}.log"
+    shell:
+        """
+        mkdir -p results/notebooks
+        jupyter nbconvert --to html \
+            --execute \
+            --ExecutePreprocessor.timeout=600 \
+            --output-dir results/notebooks \
+            --output {wildcards.notebook}.html \
+            {input.notebook} \
             &> {log}
         """

@@ -121,6 +121,9 @@ flu-usher/
    **Global outputs**:
    - `results/combined_metadata.csv`: Aggregated metadata from all input files
    - `results/combined_metadata_with_host_groups.csv`: Metadata with host group classifications added
+   - `results/notebooks/`: Executed analysis notebooks
+     - `analyze_metadata.html`: Metadata analysis report
+     - `analyze_alignments.html`: Alignment statistics report
 
 ## Pipeline Steps
 
@@ -201,6 +204,11 @@ flu-usher/
 18. **Create visualizations** (usher_to_taxonium):
     - Converts final tree and host-specific subtrees to Taxonium format
     - Incorporates metadata for interactive exploration
+
+19. **Execute analysis notebooks** (jupyter nbconvert):
+    - Runs analysis notebooks after all pipeline outputs are complete
+    - Generates HTML reports in `results/notebooks/`
+    - Includes metadata analysis and alignment statistics
 
 ## Requirements
 
