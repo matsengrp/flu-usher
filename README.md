@@ -20,12 +20,14 @@ flu-usher/
 │   ├── HA/                  # HA segment results by subtype
 │   │   ├── H1/              # H1 subtype tree and files
 │   │   ├── H3/              # H3 subtype tree and files
-│   │   └── ...
+│   │   ├── H5/              # H5 subtype tree and files
+│   │   ├── H7/              # H7 subtype tree and files
+│   │   └── H9/              # H9 subtype tree and files
 │   ├── NA/                  # NA segment results by subtype
 │   │   ├── N1/              # N1 subtype tree and files
 │   │   ├── N2/              # N2 subtype tree and files
-│   │   └── ...
-│   └── PB2/                 # Other segment results
+│   │   └── N9/              # N9 subtype tree and files
+│   └── PB2/                 # Other segment results (PB1, PA, NP, MP, NS)
 │       └── all/             # All subtypes combined
 ├── scripts/
 │   ├── parse_gisaid_data.py                        # Parse GISAID data by segment
@@ -60,11 +62,11 @@ flu-usher/
    - List HA subtypes to analyze (e.g., H1, H3, H5, H7, H9)
    - List NA subtypes to analyze (e.g., N1, N2, N9)
    - Set reference accession numbers for each segment-subtype combination
-   - Adjust filtering thresholds for sequence curation (max gaps and ambiguities)
-   - Set number of randomizations for tree building (default: multiple randomized alignments)
+   - Adjust filtering thresholds for sequence curation (max_frac_gaps, max_frac_ambig)
+   - Set number of randomizations for tree building (n_randomizations, default: 10)
    - Set desired number of threads
-   - Optionally specify host groups to extract for host-specific subtree analysis
-   - Optionally specify rerooting nodes for final trees
+   - Specify host groups to extract for host-specific subtree analysis (host_groups_to_extract)
+   - Optionally specify rerooting nodes for final trees (reroot)
 
 3. **Prepare your GISAID data**
 
@@ -94,8 +96,8 @@ flu-usher/
    - `reference/`: Reference sequence and Nextclade dataset files
    - `msa.fasta.xz`: Multiple sequence alignment from Nextclade
    - `msa.tsv.xz`: Nextclade alignment metadata
-   - `curated_msa.fasta.xz`: Quality-filtered alignment (e.g., gaps < 5%, ambiguities < 1%)
-   - `curated_unaligned_coding_seqs.fasta.xz`: Unaligned coding sequences extracted from curated sequences
+   - `curated_msa.fasta.xz`: Quality-filtered alignment (e.g., gaps < 3%, ambiguities < 0%)
+   - `unaligned_coding_seqs/`: Directory containing per-gene unaligned coding sequences extracted from curated sequences
    - `curated_reference.fasta/txt/gff/gtf`: Reference files matching the curated alignment
    - `curated_root.fasta`: Root sequence (reference or inferred from rerooting)
    - `randomized_{n}/`: Directory for each randomized alignment (n = 0, 1, 2, ...)
@@ -142,11 +144,12 @@ flu-usher/
    - Generates alignment metadata TSV
 
 4. **Curate alignment and extract coding sequences** (`curate_and_extract_coding_seqs.py`):
-   - Filters sequences by quality (gaps, ambiguities)
+   - Filters sequences by quality (gaps, ambiguities, terminal gaps)
    - Extracts only coding regions based on GFF annotations
    - Sanitizes sequence IDs for UShER compatibility
    - Filters duplicate sequences
-   - Extracts unaligned coding sequences from curated alignment
+   - Validates CDS for all genes (sequences must pass ALL validations)
+   - Extracts per-gene unaligned coding sequences from curated alignment
    - Preserves original nucleotides removed during alignment
 
 5. **Randomize alignment** (`randomize_alignment.py`):
@@ -194,7 +197,7 @@ flu-usher/
     - If not rerooted: Uses reference sequence as root
 
 16. **Add host groups** (`simplified_host_classifier.py`):
-    - Classifies hosts into simplified groups (human, swine, bovine, avian, other)
+    - Classifies hosts into simplified groups
     - Adds host_group column to metadata
 
 17. **Extract host-specific subtrees** (matUtils extract):
