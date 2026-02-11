@@ -38,7 +38,8 @@ rule all:
                host_group=config["host_groups_to_extract"]),
         # Executed analysis notebooks
         "results/notebooks/analyze_metadata.html",
-        "results/notebooks/analyze_alignments.html"
+        "results/notebooks/analyze_alignments.html",
+        "results/notebooks/analyze_dags.html"
 
 # Parse GISAID data files from all input directories at once
 rule parse_gisaid_data:
@@ -271,6 +272,7 @@ rule tree_to_dag:
         """
 
 # Use larch to merge multiple DAGs into a single DAG
+# --dag-info \
 rule larch_merge:
     input:
         dags=expand("results/{{segment}}/{{subtype}}/randomized_{n}/dag.pb",
@@ -290,6 +292,7 @@ rule larch_merge:
             {params.dag_args} \
             -v {input.vcf} \
             --trim \
+            --parsimony \
             -o {output} \
             &> {log}
         """
