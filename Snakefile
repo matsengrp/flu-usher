@@ -272,7 +272,6 @@ rule tree_to_dag:
         """
 
 # Use larch to merge multiple DAGs into a single DAG
-# --dag-info \
 rule larch_merge:
     input:
         dags=expand("results/{{segment}}/{{subtype}}/randomized_{n}/dag.pb",
