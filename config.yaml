@@ -48,6 +48,8 @@ ha_subtypes:
 na_subtypes:
   - "N1"
   - "N2"
+  - "N6"
+  - "N8"
   - "N9"
 
 # Reference accession numbers for each segment-subtype combination
@@ -62,6 +64,8 @@ references:
   # NA references by subtype
   "NA_N1": "NC_002018.1" # A/Puerto Rico/8/1934
   "NA_N2": "CY121119.1" # A/Aichi/2/1968
+  "NA_N6": "KP732684.1" # A/duck/Eastern China/S0322/2014
+  "NA_N8": "L06575.1" # A/Duck/Memohis/928/74
   "NA_N9": "NC_026429.1" # A/Shanghai/02/2013
 
   # Other segments (using H3N2 A/Aichi/2/1968 as reference for all)
