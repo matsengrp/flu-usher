@@ -37,9 +37,9 @@ rule all:
                segment=[s for s in config["segments"] if s not in ["HA", "NA"]],
                host_group=config["host_groups_to_extract"]),
         # Executed analysis notebooks
-        "results/notebooks/analyze_metadata.html",
-        "results/notebooks/analyze_alignments.html",
-        "results/notebooks/analyze_dags.html"
+        "results/notebooks/analyze_metadata.done",
+        "results/notebooks/analyze_alignments.done",
+        "results/notebooks/analyze_dags.done"
 
 # Parse GISAID data files from all input directories at once
 rule parse_gisaid_data:
@@ -542,17 +542,17 @@ rule execute_notebooks:
         other_trees=expand("results/{segment}/all/final_tree.jsonl.gz",
                           segment=[s for s in config["segments"] if s not in ["HA", "NA"]])
     output:
-        "results/notebooks/{notebook}.html"
+        "results/notebooks/{notebook}.done"
     log:
         "logs/notebooks/{notebook}.log"
     shell:
         """
         mkdir -p results/notebooks
-        jupyter nbconvert --to html \
+        jupyter nbconvert --to notebook \
             --execute \
+            --inplace \
             --ExecutePreprocessor.timeout=600 \
-            --output-dir results/notebooks \
-            --output {wildcards.notebook}.html \
             {input.notebook} \
             &> {log}
+        touch {output}
         """
