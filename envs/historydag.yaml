@@ -1,0 +1,10 @@
+name: historydag
+
+channels:
+  - https://prefix.dev/conda-forge
+  - https://prefix.dev/matsengrp
+  - nodefaults
+
+dependencies:
+  - python =3.10
+  - historydag

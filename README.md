@@ -47,13 +47,23 @@ flu-usher/
 
 1. **Set up your environment**
 
+   Create and activate the conda environment:
    ```
-   # Create the conda environment
    conda env create -f environment.yml
-   
-   # Activate the environment
-   conda activate usher
+   conda activate flu-usher
    ```
+
+   Build and install `larch` from source into the environment (from the `larch/` directory), where `$CONDA_PREFIX` is the path to the active conda environment (e.g., `/home/hhaddox/miniforge3/envs/flu-usher/`):
+   ```
+   git submodule update --init --recursive
+   mkdir build
+   cd build
+   cmake -DCMAKE_INSTALL_PREFIX=$CONDA_PREFIX ..
+   make -j16
+   make install
+   ```
+
+   Other dependencies are managed per-step via conda environments in `envs/`, which Snakemake invokes automatically.
 
 2. **Configure the pipeline**
 

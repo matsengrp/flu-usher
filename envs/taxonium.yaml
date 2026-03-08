@@ -1,0 +1,10 @@
+name: taxonium
+
+channels:
+  - https://prefix.dev/conda-forge
+  - nodefaults
+
+dependencies:
+  - pip
+  - pip:
+    - taxoniumtools

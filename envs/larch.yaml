@@ -1,0 +1,9 @@
+name: larch
+
+channels:
+  - https://prefix.dev/conda-forge
+  - https://prefix.dev/matsengrp
+  - nodefaults
+
+dependencies:
+  - larch-phylo
