@@ -227,4 +227,4 @@ flu-usher/
 
 ## Requirements
 
-All dependencies are specified in the environment.yml file.
+The main conda environment (`environment.yml`) provides Snakemake and the build dependencies needed to compile larch. Per-step dependencies are managed via separate conda environments in `envs/`, which Snakemake invokes automatically using the `--use-conda` flag.

@@ -10,12 +10,14 @@ Flu-UShER Pipeline - A Snakemake pipeline for building phylogenetic trees of inf
 
 ### Environment Setup
 ```bash
-# Create the conda environment
+# Create the main conda environment (provides Snakemake and larch build deps)
 conda env create -f environment.yml
 
 # Activate the environment
 conda activate flu-usher
 ```
+
+Per-step dependencies are managed via separate conda environments in `envs/` (fatovcf, historydag, larch, nextclade, python, taxonium, usher). Snakemake creates and activates these automatically when run with `--use-conda`.
 
 ### Running the Pipeline
 ```bash
