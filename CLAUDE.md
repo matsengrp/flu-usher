@@ -14,30 +14,30 @@ Flu-UShER Pipeline - A Snakemake pipeline for building phylogenetic trees of inf
 conda env create -f environment.yml
 
 # Activate the environment
-conda activate usher
+conda activate flu-usher
 ```
 
 ### Running the Pipeline
 ```bash
 # Test run (dry-run) to see what will be executed
-snakemake -np
+snakemake -np --use-conda
 
 # Run the full pipeline with specified cores
-snakemake --cores 12
+snakemake --cores 12 --use-conda
 
 # Run for specific segment-subtype combinations
-snakemake --cores 8 results/HA/H5/final_tree.jsonl.gz
-snakemake --cores 8 results/NA/N1/final_tree.jsonl.gz
-snakemake --cores 8 results/PB2/all/final_tree.jsonl.gz
+snakemake --cores 8 --use-conda results/HA/H5/final_tree.jsonl.gz
+snakemake --cores 8 --use-conda results/NA/N1/final_tree.jsonl.gz
+snakemake --cores 8 --use-conda results/PB2/all/final_tree.jsonl.gz
 
 # Run for host-specific subtrees
-snakemake --cores 8 results/HA/H5/host_specific_trees/avian_tree.jsonl.gz
+snakemake --cores 8 --use-conda results/HA/H5/host_specific_trees/avian_tree.jsonl.gz
 ```
 
 ### Workflow Control
 ```bash
 # Force rerun from a specific rule
-snakemake --forcerun <rule_name> --cores 8
+snakemake --forcerun <rule_name> --cores 8 --use-conda
 
 # Generate workflow visualization
 snakemake --dag | dot -Tpdf > workflow.pdf

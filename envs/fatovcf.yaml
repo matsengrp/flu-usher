@@ -1,0 +1,9 @@
+name: fatovcf
+
+channels:
+  - https://prefix.dev/bioconda
+  - https://prefix.dev/conda-forge
+  - nodefaults
+
+dependencies:
+  - ucsc-fatovcf

@@ -1,0 +1,22 @@
+name: flu-python
+
+channels:
+  - https://prefix.dev/conda-forge
+  - https://prefix.dev/bioconda
+  - nodefaults
+
+dependencies:
+  - python
+  - biopython
+  - pandas
+  - xlrd
+  - pyyaml
+  - numpy
+  - matplotlib
+  - seaborn
+  - scipy
+  - statsmodels
+  - jupyter
+  - notebook
+  - nbconvert
+  - ipywidgets

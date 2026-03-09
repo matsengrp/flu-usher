@@ -43,6 +43,7 @@ rule all:
 
 # Parse GISAID data files from all input directories at once
 rule parse_gisaid_data:
+    conda: "envs/python.yaml"
     output:
         metadata="results/combined_metadata.csv",
         # Generate output files for each segment-subtype combination
@@ -69,6 +70,7 @@ rule parse_gisaid_data:
 # Download all reference sequences sequentially with fixed wait time between downloads
 # This prevents NCBI rate limiting and provides predictable runtime
 rule download_all_references:
+    conda: "envs/python.yaml"
     output:
         # Explicitly list all expected outputs for Snakemake dependency tracking
         fastas=expand("results/HA/{subtype}/reference/reference.fasta",
@@ -105,6 +107,7 @@ rule download_all_references:
 
 # Use Nextclade to align sequences to the reference
 rule align_sequences:
+    conda: "envs/nextclade.yaml"
     input:
         sequences="results/{segment}/{subtype}/raw_sequences.fasta.xz",
         reference_gff="results/{segment}/{subtype}/reference/reference.gff",
@@ -135,6 +138,7 @@ rule align_sequences:
 # and validates CDS for all genes. Sequences must pass ALL validations to be included.
 # Outputs curated MSA, reference files, and per-gene unaligned coding sequences.
 rule curate_and_extract_coding_seqs:
+    conda: "envs/python.yaml"
     input:
         alignment="results/{segment}/{subtype}/msa.fasta.xz",
         gff="results/{segment}/{subtype}/reference/reference.gff",
@@ -173,6 +177,7 @@ rule curate_and_extract_coding_seqs:
 
 # Randomize the alignment order while keeping the reference at the top
 rule randomize_alignment:
+    conda: "envs/python.yaml"
     input:
         curated_msa="results/{segment}/{subtype}/curated_msa.fasta.xz"
     output:
@@ -192,6 +197,7 @@ rule randomize_alignment:
 
 # Convert the MSA to VCF format for UShER
 rule create_vcf:
+    conda: "envs/fatovcf.yaml"
     input:
         msa="results/{segment}/{subtype}/randomized_{n}/msa.fasta.xz"
     output:
@@ -207,6 +213,7 @@ rule create_vcf:
 # Create initial tree with usher-sampled
 # TODO add this arg back in? -e 5
 rule create_initial_tree:
+    conda: "envs/usher.yaml"
     input:
         vcf="results/{segment}/{subtype}/randomized_{n}/msa.vcf"
     output:
@@ -232,6 +239,7 @@ rule create_initial_tree:
 
 # Optimize the tree with matOptimize
 rule optimize_tree:
+    conda: "envs/usher.yaml"
     input:
         tree="results/{segment}/{subtype}/randomized_{n}/preopt_tree.pb.gz",
         vcf="results/{segment}/{subtype}/randomized_{n}/msa.vcf"
@@ -257,8 +265,6 @@ rule tree_to_dag:
         vcf="results/{segment}/{subtype}/randomized_{n}/msa.vcf"
     output:
         "results/{segment}/{subtype}/randomized_{n}/dag.pb"
-    conda:
-        "larch"
     log:
         "logs/{segment}/{subtype}/randomized_{n}/tree_to_dag.log"
     shell:
@@ -279,8 +285,6 @@ rule larch_merge:
         vcf="results/{segment}/{subtype}/randomized_0/msa.vcf"
     output:
         "results/{segment}/{subtype}/larch_merged_dag.pb"
-    conda:
-        "larch"
     log:
         "logs/{segment}/{subtype}/larch_merge.log"
     params:
@@ -296,37 +300,13 @@ rule larch_merge:
             &> {log}
         """
 
-# Use larch-usher to optimize the trees
-# rule larch_optimize:
-#     input:
-#         dag="results/{segment}/{subtype}/larch_merged_dag.pb",
-#     output:
-#         opt_dag="results/{segment}/{subtype}/larch_optimized_dag.pb"
-#     conda:
-#         "larch"
-#     threads: config["threads"]
-#     log:
-#         "logs/{segment}/{subtype}/larch_optimize.log"
-#     shell:
-#         """
-#         larch-usher -i {input.dag} \
-#             -o {output.opt_dag} \
-#             -c 1 \
-#             -s 0 \
-#             --max-subtree-clade-size 2000 \
-#             --trim \
-#             --quiet \
-#             &> {log}
-#         """
-
 # Trim the DAG to remove suboptimal trees
 rule trim_dag:
+    conda: "envs/historydag.yaml"
     input:
         dag_protobuf="results/{segment}/{subtype}/larch_merged_dag.pb"
     output:
         trimmed_dag_protobuf="results/{segment}/{subtype}/trimmed_dag.pb"
-    conda:
-        "historydag"
     log:
         "logs/{segment}/{subtype}/trim_dag.log"
     script:
@@ -334,12 +314,11 @@ rule trim_dag:
 
 # Create a newick tree from the trimmed DAG
 rule create_newick:
+    conda: "envs/historydag.yaml"
     input:
         dag_protobuf="results/{segment}/{subtype}/trimmed_dag.pb"
     output:
         newick="results/{segment}/{subtype}/sampled_tree.nh"
-    conda:
-        "historydag"
     log:
         "logs/{segment}/{subtype}/create_newick.log"
     script:
@@ -347,6 +326,7 @@ rule create_newick:
 
 # Create MAT protobuf from newick tree
 rule create_mat_protobuf:
+    conda: "envs/usher.yaml"
     input:
         nh_file="results/{segment}/{subtype}/sampled_tree.nh",
         vcf_file="results/{segment}/{subtype}/randomized_0/msa.vcf"
@@ -361,83 +341,110 @@ rule create_mat_protobuf:
 
 # Reroot the tree if specified in config, otherwise create symlink
 rule reroot_tree:
+    conda: "envs/usher.yaml"
     input:
         "results/{segment}/{subtype}/sampled_tree.pb.gz"
     output:
         "results/{segment}/{subtype}/final_tree.pb.gz"
+    params:
+        new_root=lambda wildcards: config.get("reroot", {}).get(f"{wildcards.segment}_{wildcards.subtype}", "")
     log:
         "logs/{segment}/{subtype}/reroot.log"
-    run:
-        key = f"{wildcards.segment}_{wildcards.subtype}"
-        if key in config.get("reroot", {}):
-            new_root = config["reroot"][key]
-            shell("""
-                matUtils extract -i {input} \
-                    -o {output} \
-                    -y {new_root} \
-                    &> {log}
-            """)
-        else:
-            shell("""
-                ln -sf $(basename {input}) {output} \
-                && echo "Created symlink for {key} (no rerooting specified)" > {log}
-            """)
+    shell:
+        """
+        if [ -n "{params.new_root}" ]; then
+            matUtils extract -i {input} \
+                -o {output} \
+                -y {params.new_root} \
+                &> {log}
+        else
+            ln -sf $(basename {input}) {output} \
+            && echo "Created symlink (no rerooting specified)" > {log}
+        fi
+        """
 
 # Extract root sequence from tree mutations or create symlink to reference
-rule create_root_fasta:
+# Step 1: create the samples file listing the reference and new root node
+rule create_root_samples_file:
+    conda: "envs/python.yaml"
+    input:
+        ref="results/{segment}/{subtype}/curated_reference.fasta"
+    output:
+        "results/{segment}/{subtype}/root_samples.txt"
+    params:
+        new_root=lambda wildcards: config.get("reroot", {}).get(f"{wildcards.segment}_{wildcards.subtype}", "")
+    log:
+        "logs/{segment}/{subtype}/create_root_samples_file.log"
+    shell:
+        """
+        if [ -n "{params.new_root}" ]; then
+            python scripts/create_root_samples_file.py \
+                --reference {input.ref} \
+                --new-root {params.new_root} \
+                --output {output} \
+                &> {log}
+        else
+            touch {output} && echo "No rerooting specified, created empty file" > {log}
+        fi
+        """
+
+# Step 2: extract per-sample mutation paths using matUtils
+rule extract_root_mutations:
+    conda: "envs/usher.yaml"
     input:
         tree="results/{segment}/{subtype}/sampled_tree.pb.gz",
+        samples="results/{segment}/{subtype}/root_samples.txt"
+    output:
+        "results/{segment}/{subtype}/root_paths.txt"
+    params:
+        new_root=lambda wildcards: config.get("reroot", {}).get(f"{wildcards.segment}_{wildcards.subtype}", "")
+    log:
+        "logs/{segment}/{subtype}/extract_root_mutations.log"
+    shell:
+        """
+        if [ -n "{params.new_root}" ]; then
+            matUtils extract -i {input.tree} \
+                -s {input.samples} \
+                -S {output} \
+                &> {log}
+        else
+            touch {output} && echo "No rerooting specified, created empty file" > {log}
+        fi
+        """
+
+# Step 3: infer root sequence from mutation paths, or symlink reference if no rerooting
+rule create_root_fasta:
+    conda: "envs/python.yaml"
+    input:
         msa="results/{segment}/{subtype}/curated_msa.fasta.xz",
-        ref="results/{segment}/{subtype}/curated_reference.fasta"
+        ref="results/{segment}/{subtype}/curated_reference.fasta",
+        paths="results/{segment}/{subtype}/root_paths.txt"
     output:
         "results/{segment}/{subtype}/curated_root.fasta"
     params:
-        new_root=lambda wildcards: config.get("reroot", {}).get(f"{wildcards.segment}_{wildcards.subtype}", None)
+        new_root=lambda wildcards: config.get("reroot", {}).get(f"{wildcards.segment}_{wildcards.subtype}", "")
     log:
         "logs/{segment}/{subtype}/create_root_fasta.log"
-    run:
-        if params.new_root:
-            # Rerooting specified - infer root sequence from tree
-            samples_file = f"results/{wildcards.segment}/{wildcards.subtype}/root_samples.txt"
-            paths_file = f"results/{wildcards.segment}/{wildcards.subtype}/root_paths.txt"
-
-            # Create samples file (reference + new root)
-            shell("""
-                python scripts/create_root_samples_file.py \
-                    --reference {input.ref} \
-                    --new-root {params.new_root} \
-                    --output {samples_file} \
-                    &>> {log}
-            """)
-
-            # Extract mutation paths using matUtils
-            shell("""
-                matUtils extract -i {input.tree} \
-                    -s {samples_file} \
-                    -S {paths_file} \
-                    &>> {log}
-            """)
-
-            # Infer root sequence from mutations and validate against MSA
-            shell("""
-                python scripts/extract_root_sequence.py \
-                    --reference {input.ref} \
-                    --msa {input.msa} \
-                    --paths {paths_file} \
-                    --new-root-name {params.new_root} \
-                    --output {output} \
-                    &>> {log}
-            """)
-        else:
-            # No rerooting specified, use reference
-            shell("""
-                ln -sf $(basename {input.ref}) {output} \
-                && echo "Created symlink (no rerooting specified)" > {log}
-            """)
+    shell:
+        """
+        if [ -n "{params.new_root}" ]; then
+            python scripts/extract_root_sequence.py \
+                --reference {input.ref} \
+                --msa {input.msa} \
+                --paths {input.paths} \
+                --new-root-name {params.new_root} \
+                --output {output} \
+                &> {log}
+        else
+            ln -sf $(basename {input.ref}) {output} \
+            && echo "Created symlink (no rerooting specified)" > {log}
+        fi
+        """
 
 
 # Add host group classifications to combined metadata
 rule add_host_groups:
+    conda: "envs/python.yaml"
     input:
         metadata="results/combined_metadata.csv"
     output:
@@ -451,6 +458,7 @@ rule add_host_groups:
 
 # Create samples file for host-specific subtree extraction
 rule create_host_samples_file:
+    conda: "envs/python.yaml"
     input:
         curated_msa="results/{segment}/{subtype}/curated_msa.fasta.xz",
         metadata="results/combined_metadata_with_host_groups.csv",
@@ -472,6 +480,7 @@ rule create_host_samples_file:
 
 # Extract host-specific subtree using matUtils, collapsing trees before outputting
 rule extract_host_subtree:
+    conda: "envs/usher.yaml"
     input:
         tree="results/{segment}/{subtype}/final_tree.pb.gz",
         samples="results/{segment}/{subtype}/host_specific_trees/{host_group}_samples.txt"
@@ -491,6 +500,7 @@ rule extract_host_subtree:
 
 # Convert the final tree to Taxonium format for visualization
 rule convert_to_taxonium:
+    conda: "envs/taxonium.yaml"
     input:
         final_tree="results/{segment}/{subtype}/final_tree.pb.gz",
         metadata="results/combined_metadata_with_host_groups.csv"
@@ -511,6 +521,7 @@ rule convert_to_taxonium:
 
 # Convert host-specific subtrees to Taxonium format for visualization
 rule convert_host_subtree_to_taxonium:
+    conda: "envs/taxonium.yaml"
     input:
         tree="results/{segment}/{subtype}/host_specific_trees/{host_group}_tree.pb.gz",
         metadata="results/combined_metadata_with_host_groups.csv"
@@ -531,6 +542,7 @@ rule convert_host_subtree_to_taxonium:
 
 # Execute analysis notebooks and generate HTML reports
 rule execute_notebooks:
+    conda: "envs/python.yaml"
     input:
         notebook="notebooks/{notebook}.ipynb",
         # Ensure all main pipeline outputs are complete before running notebooks

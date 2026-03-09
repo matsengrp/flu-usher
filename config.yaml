@@ -80,9 +80,6 @@ references:
 max_frac_gaps: 0.03
 max_frac_ambig: 0.00
 
-# Parameters for tree pruning
-max_parsimony: 20
-
 # Number of randomizations for alignment reordering
 n_randomizations: 10
 
