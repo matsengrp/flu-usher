@@ -36,6 +36,15 @@ rule all:
         expand("results/{segment}/all/host_specific_trees/{host_group}_tree.jsonl.gz",
                segment=[s for s in config["segments"] if s not in ["HA", "NA"]],
                host_group=config["host_groups_to_extract"]),
+        # Newick trees for HA segments by subtype
+        expand("results/HA/{subtype}/final_tree.nwk",
+               subtype=config["ha_subtypes"]),
+        # Newick trees for NA segments by subtype
+        expand("results/NA/{subtype}/final_tree.nwk",
+               subtype=config["na_subtypes"]),
+        # Newick trees for other segments (all subtypes combined)
+        expand("results/{segment}/all/final_tree.nwk",
+               segment=[s for s in config["segments"] if s not in ["HA", "NA"]]),
         # Executed analysis notebooks
         "results/notebooks/analyze_metadata.done",
         "results/notebooks/analyze_alignments.done",
@@ -538,6 +547,20 @@ rule convert_host_subtree_to_taxonium:
             --columns isolate_name,subtype,clade,passage_history,location,host,host_group,collection_date \
             --output {output} \
             &> {log}
+        """
+
+# Extract newick tree from final protobuf tree
+rule extract_final_newick:
+    conda: "envs/usher.yaml"
+    input:
+        tree="results/{segment}/{subtype}/final_tree.pb.gz"
+    output:
+        newick="results/{segment}/{subtype}/final_tree.nwk"
+    log:
+        "logs/{segment}/{subtype}/extract_final_newick.log"
+    shell:
+        """
+        matUtils extract -i {input.tree} -t {output.newick} &> {log}
         """
 
 # Execute analysis notebooks and generate HTML reports
