@@ -108,3 +108,14 @@ host_groups_to_extract:
   - "human"
   - "avian"
   - "swine"
+
+# Geographic subtree extraction
+geographic_groups_to_extract:
+  - "north_america"
+  - "europe"
+  - "asia"
+
+# Temporal subtree extraction (per-tree median date split)
+temporal_groups_to_extract:
+  - "early"
+  - "late"

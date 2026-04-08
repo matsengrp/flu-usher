@@ -34,6 +34,12 @@ snakemake --cores 8 --use-conda results/PB2/all/final_tree.jsonl.gz
 
 # Run for host-specific subtrees
 snakemake --cores 8 --use-conda results/HA/H5/host_specific_trees/avian_tree.jsonl.gz
+
+# Run for geographic subtrees
+snakemake --cores 8 --use-conda results/HA/H5/geographic_trees/north_america_tree.jsonl.gz
+
+# Run for temporal subtrees
+snakemake --cores 8 --use-conda results/HA/H5/temporal_trees/early_tree.jsonl.gz
 ```
 
 ### Workflow Control
@@ -53,7 +59,7 @@ The pipeline was recently reorganized from a subtype-first to a segment-first st
 ```
 results/
 ├── combined_metadata.csv                    # Aggregated metadata
-├── combined_metadata_with_host_groups.csv   # Metadata with host groups
+├── combined_metadata_augmented.csv          # Metadata with host_group, geographic_group, temporal_group
 ├── HA/          # HA segment results by subtype
 │   ├── H1/      # Individual subtype results
 │   │   ├── raw_sequences.fasta.xz
@@ -73,10 +79,18 @@ results/
 │   │   ├── trimmed_dag.pb
 │   │   ├── sampled_tree.{nh,pb.gz}
 │   │   ├── final_tree.{pb.gz,jsonl.gz}
-│   │   └── host_specific_trees/
-│   │       ├── {host_group}_samples.txt
-│   │       ├── {host_group}_tree.pb.gz
-│   │       └── {host_group}_tree.jsonl.gz
+│   │   ├── host_specific_trees/
+│   │   │   ├── {host_group}_samples.txt
+│   │   │   ├── {host_group}_tree.pb.gz
+│   │   │   └── {host_group}_tree.jsonl.gz
+│   │   ├── geographic_trees/
+│   │   │   ├── {geo_group}_samples.txt
+│   │   │   ├── {geo_group}_tree.pb.gz
+│   │   │   └── {geo_group}_tree.jsonl.gz
+│   │   └── temporal_trees/
+│   │       ├── {temporal_group}_samples.txt
+│   │       ├── {temporal_group}_tree.pb.gz
+│   │       └── {temporal_group}_tree.jsonl.gz
 │   ├── H3/
 │   ├── H5/
 │   ├── H7/
@@ -104,20 +118,23 @@ results/
    - Number of randomizations for tree building (n_randomizations)
    - Number of threads for parallel execution
    - Host groups to extract for host-specific subtree analysis (host_groups_to_extract)
+   - Geographic groups to extract for geographic subtree analysis (geographic_groups_to_extract)
+   - Temporal groups to extract for temporal subtree analysis (temporal_groups_to_extract)
    - Optional rerooting specifications for final trees (reroot)
 
 3. **scripts/**: Python scripts for specific tasks:
    - `parse_gisaid_data.py`: Parses GISAID FASTA/metadata files and organizes by segment/subtype
    - `download_ref_seq.py`: Downloads reference sequences from NCBI and creates Nextclade datasets
-   - `curate_msa.py`: Filters alignments by quality metrics and extracts coding regions
-   - `create_unaligned_coding_seqs.py`: Extracts unaligned coding sequences from curated alignments
+   - `curate_and_extract_coding_seqs.py`: Curates alignments by quality metrics, extracts coding regions and per-gene unaligned coding sequences
    - `randomize_alignment.py`: Creates randomized versions of alignments for multiple tree builds
    - `trim_dag.py`: Trims suboptimal trees from merged DAGs
    - `convert_DAG_protobuf_to_newick_samples.py`: Samples representative trees from DAGs
    - `create_root_samples_file.py`: Creates sample files for root sequence extraction
    - `extract_root_sequence.py`: Infers root sequences from tree mutations
-   - `add_host_groups.py`: Classifies hosts into taxonomic groups (avian, mammalian, etc.)
-   - `create_host_samples_file.py`: Creates sample files for host-specific subtree extraction
+   - `simplified_host_classifier.py`: Host classification logic (used by augment_metadata.py)
+   - `augment_metadata.py`: Adds host_group, geographic_group, and temporal_group columns to metadata
+   - `create_samples_file.py`: Creates sample files for subtree extraction by any metadata column
+   - `create_temporal_samples_file.py`: Creates sample files for temporal subtree extraction (per-tree median date split)
 
 4. **notebooks/**: Jupyter notebooks for analysis and development
    - `analyze_alignments.ipynb`: Analyzes sequence statistics across segments/subtypes
@@ -141,9 +158,9 @@ results/
 14. **Create MAT Protobuf** → Converts sampled tree to MAT protobuf format
 15. **Reroot Tree** → Optionally reroots tree at specified node (matUtils extract)
 16. **Create Root Sequence** → Infers root sequence from tree or uses reference
-17. **Add Host Groups** → Classifies hosts into taxonomic groups
-18. **Extract Host Subtrees** → Creates separate subtrees for each host group (matUtils extract)
-19. **Create Visualizations** → Generates Taxonium format for full tree and host-specific subtrees
+17. **Augment Metadata** → Adds host_group, geographic_group, and temporal_group columns
+18. **Extract Subtrees** → Creates subtrees for each host group, geographic region, and temporal period (matUtils extract)
+19. **Create Visualizations** → Generates Taxonium format for full tree and all subtrees
 
 ### Input Data Requirements
 
@@ -161,6 +178,6 @@ The pipeline expects GISAID data in each input directory:
 - Reference sequences are specified in config.yaml and can be customized
 - The pipeline uses a DAG-based approach (via larch and historydag) to build consensus trees from multiple randomized alignments
 - Multiple randomizations help explore tree space and produce more robust phylogenies
-- Host-specific subtrees are automatically extracted for specified host groups (e.g., avian, mammalian)
+- Subtrees are automatically extracted for specified host groups (e.g., human, avian, swine), geographic regions (e.g., north_america, europe, asia), and temporal periods (early/late split at per-tree median collection date)
 - Trees can be optionally rerooted using the `reroot` configuration parameter
 - The final outputs are interactive Taxonium visualization files (.jsonl.gz)
