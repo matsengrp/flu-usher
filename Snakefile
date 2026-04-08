@@ -16,6 +16,14 @@ rule all:
         expand("results/HA/{subtype}/host_specific_trees/{host_group}_tree.jsonl.gz",
                subtype=config["ha_subtypes"],
                host_group=config["host_groups_to_extract"]),
+        # Geographic Taxonium visualizations for HA segments by subtype
+        expand("results/HA/{subtype}/geographic_trees/{geo_group}_tree.jsonl.gz",
+               subtype=config["ha_subtypes"],
+               geo_group=config["geographic_groups_to_extract"]),
+        # Temporal Taxonium visualizations for HA segments by subtype
+        expand("results/HA/{subtype}/temporal_trees/{temporal_group}_tree.jsonl.gz",
+               subtype=config["ha_subtypes"],
+               temporal_group=config["temporal_groups_to_extract"]),
         # Taxonium visualization trees for NA segments by subtype
         expand("results/NA/{subtype}/final_tree.jsonl.gz",
                subtype=config["na_subtypes"]),
@@ -26,6 +34,14 @@ rule all:
         expand("results/NA/{subtype}/host_specific_trees/{host_group}_tree.jsonl.gz",
                subtype=config["na_subtypes"],
                host_group=config["host_groups_to_extract"]),
+        # Geographic Taxonium visualizations for NA segments by subtype
+        expand("results/NA/{subtype}/geographic_trees/{geo_group}_tree.jsonl.gz",
+               subtype=config["na_subtypes"],
+               geo_group=config["geographic_groups_to_extract"]),
+        # Temporal Taxonium visualizations for NA segments by subtype
+        expand("results/NA/{subtype}/temporal_trees/{temporal_group}_tree.jsonl.gz",
+               subtype=config["na_subtypes"],
+               temporal_group=config["temporal_groups_to_extract"]),
         # Taxonium visualization trees for other segments (all subtypes combined)
         expand("results/{segment}/all/final_tree.jsonl.gz",
                segment=[s for s in config["segments"] if s not in ["HA", "NA"]]),
@@ -36,6 +52,14 @@ rule all:
         expand("results/{segment}/all/host_specific_trees/{host_group}_tree.jsonl.gz",
                segment=[s for s in config["segments"] if s not in ["HA", "NA"]],
                host_group=config["host_groups_to_extract"]),
+        # Geographic Taxonium visualizations for other segments (all subtypes combined)
+        expand("results/{segment}/all/geographic_trees/{geo_group}_tree.jsonl.gz",
+               segment=[s for s in config["segments"] if s not in ["HA", "NA"]],
+               geo_group=config["geographic_groups_to_extract"]),
+        # Temporal Taxonium visualizations for other segments (all subtypes combined)
+        expand("results/{segment}/all/temporal_trees/{temporal_group}_tree.jsonl.gz",
+               segment=[s for s in config["segments"] if s not in ["HA", "NA"]],
+               temporal_group=config["temporal_groups_to_extract"]),
         # Newick trees for HA segments by subtype
         expand("results/HA/{subtype}/final_tree.nwk",
                subtype=config["ha_subtypes"]),
@@ -451,18 +475,18 @@ rule create_root_fasta:
         """
 
 
-# Add host group classifications to combined metadata
-rule add_host_groups:
+# Augment combined metadata with host_group, geographic_group, and temporal_group columns
+rule augment_metadata:
     conda: "envs/python.yaml"
     input:
         metadata="results/combined_metadata.csv"
     output:
-        "results/combined_metadata_with_host_groups.csv"
+        "results/combined_metadata_augmented.csv"
     log:
-        "logs/add_host_groups.log"
+        "logs/augment_metadata.log"
     shell:
         """
-        python scripts/simplified_host_classifier.py {input.metadata} {output} 2> {log}
+        python scripts/augment_metadata.py {input.metadata} {output} 2> {log}
         """
 
 # Create samples file for host-specific subtree extraction
@@ -470,7 +494,7 @@ rule create_host_samples_file:
     conda: "envs/python.yaml"
     input:
         curated_msa="results/{segment}/{subtype}/curated_msa.fasta.xz",
-        metadata="results/combined_metadata_with_host_groups.csv",
+        metadata="results/combined_metadata_augmented.csv",
         root="results/{segment}/{subtype}/curated_root.fasta"
     output:
         "results/{segment}/{subtype}/host_specific_trees/{host_group}_samples.txt"
@@ -478,10 +502,11 @@ rule create_host_samples_file:
         "logs/{segment}/{subtype}/create_host_samples_{host_group}.log"
     shell:
         """
-        python scripts/create_host_samples_file.py \
+        python scripts/create_samples_file.py \
             --curated-msa {input.curated_msa} \
             --metadata {input.metadata} \
-            --host-group {wildcards.host_group} \
+            --column host_group \
+            --value {wildcards.host_group} \
             --root {input.root} \
             --output {output} \
             &> {log}
@@ -512,7 +537,7 @@ rule convert_to_taxonium:
     conda: "envs/taxonium.yaml"
     input:
         final_tree="results/{segment}/{subtype}/final_tree.pb.gz",
-        metadata="results/combined_metadata_with_host_groups.csv"
+        metadata="results/combined_metadata_augmented.csv"
     output:
         "results/{segment}/{subtype}/final_tree.jsonl.gz"
     log:
@@ -523,7 +548,7 @@ rule convert_to_taxonium:
             --input {input.final_tree} \
             --metadata {input.metadata} \
             --key_column isolate_id \
-            --columns isolate_name,subtype,clade,passage_history,location,host,host_group,collection_date \
+            --columns isolate_name,subtype,clade,passage_history,location,host,host_group,geographic_group,temporal_group,collection_date \
             --output {output} \
             &> {log}
         """
@@ -533,7 +558,7 @@ rule convert_host_subtree_to_taxonium:
     conda: "envs/taxonium.yaml"
     input:
         tree="results/{segment}/{subtype}/host_specific_trees/{host_group}_tree.pb.gz",
-        metadata="results/combined_metadata_with_host_groups.csv"
+        metadata="results/combined_metadata_augmented.csv"
     output:
         "results/{segment}/{subtype}/host_specific_trees/{host_group}_tree.jsonl.gz"
     log:
@@ -544,7 +569,134 @@ rule convert_host_subtree_to_taxonium:
             --input {input.tree} \
             --metadata {input.metadata} \
             --key_column isolate_id \
-            --columns isolate_name,subtype,clade,passage_history,location,host,host_group,collection_date \
+            --columns isolate_name,subtype,clade,passage_history,location,host,host_group,geographic_group,temporal_group,collection_date \
+            --output {output} \
+            &> {log}
+        """
+
+# Create samples file for geographic subtree extraction
+rule create_geographic_samples_file:
+    conda: "envs/python.yaml"
+    input:
+        curated_msa="results/{segment}/{subtype}/curated_msa.fasta.xz",
+        metadata="results/combined_metadata_augmented.csv",
+        root="results/{segment}/{subtype}/curated_root.fasta"
+    output:
+        "results/{segment}/{subtype}/geographic_trees/{geo_group}_samples.txt"
+    log:
+        "logs/{segment}/{subtype}/create_geo_samples_{geo_group}.log"
+    shell:
+        """
+        python scripts/create_samples_file.py \
+            --curated-msa {input.curated_msa} \
+            --metadata {input.metadata} \
+            --column geographic_group \
+            --value {wildcards.geo_group} \
+            --root {input.root} \
+            --output {output} \
+            &> {log}
+        """
+
+# Extract geographic subtree using matUtils, collapsing trees before outputting
+rule extract_geographic_subtree:
+    conda: "envs/usher.yaml"
+    input:
+        tree="results/{segment}/{subtype}/final_tree.pb.gz",
+        samples="results/{segment}/{subtype}/geographic_trees/{geo_group}_samples.txt"
+    output:
+        "results/{segment}/{subtype}/geographic_trees/{geo_group}_tree.pb.gz"
+    log:
+        "logs/{segment}/{subtype}/extract_geo_subtree_{geo_group}.log"
+    shell:
+        """
+        matUtils extract \
+            -i {input.tree} \
+            -s {input.samples} \
+            -O \
+            -o {output} \
+            &> {log}
+        """
+
+# Convert geographic subtrees to Taxonium format for visualization
+rule convert_geographic_subtree_to_taxonium:
+    conda: "envs/taxonium.yaml"
+    input:
+        tree="results/{segment}/{subtype}/geographic_trees/{geo_group}_tree.pb.gz",
+        metadata="results/combined_metadata_augmented.csv"
+    output:
+        "results/{segment}/{subtype}/geographic_trees/{geo_group}_tree.jsonl.gz"
+    log:
+        "logs/{segment}/{subtype}/taxonium_geo_{geo_group}.log"
+    shell:
+        """
+        usher_to_taxonium \
+            --input {input.tree} \
+            --metadata {input.metadata} \
+            --key_column isolate_id \
+            --columns isolate_name,subtype,clade,passage_history,location,host,host_group,geographic_group,temporal_group,collection_date \
+            --output {output} \
+            &> {log}
+        """
+
+# Create samples file for temporal subtree extraction (per-tree median date split)
+rule create_temporal_samples_file:
+    conda: "envs/python.yaml"
+    input:
+        curated_msa="results/{segment}/{subtype}/curated_msa.fasta.xz",
+        metadata="results/combined_metadata_augmented.csv",
+        root="results/{segment}/{subtype}/curated_root.fasta"
+    output:
+        "results/{segment}/{subtype}/temporal_trees/{temporal_group}_samples.txt"
+    log:
+        "logs/{segment}/{subtype}/create_temporal_samples_{temporal_group}.log"
+    shell:
+        """
+        python scripts/create_temporal_samples_file.py \
+            --curated-msa {input.curated_msa} \
+            --metadata {input.metadata} \
+            --temporal-group {wildcards.temporal_group} \
+            --root {input.root} \
+            --output {output} \
+            &> {log}
+        """
+
+# Extract temporal subtree using matUtils, collapsing trees before outputting
+rule extract_temporal_subtree:
+    conda: "envs/usher.yaml"
+    input:
+        tree="results/{segment}/{subtype}/final_tree.pb.gz",
+        samples="results/{segment}/{subtype}/temporal_trees/{temporal_group}_samples.txt"
+    output:
+        "results/{segment}/{subtype}/temporal_trees/{temporal_group}_tree.pb.gz"
+    log:
+        "logs/{segment}/{subtype}/extract_temporal_subtree_{temporal_group}.log"
+    shell:
+        """
+        matUtils extract \
+            -i {input.tree} \
+            -s {input.samples} \
+            -O \
+            -o {output} \
+            &> {log}
+        """
+
+# Convert temporal subtrees to Taxonium format for visualization
+rule convert_temporal_subtree_to_taxonium:
+    conda: "envs/taxonium.yaml"
+    input:
+        tree="results/{segment}/{subtype}/temporal_trees/{temporal_group}_tree.pb.gz",
+        metadata="results/combined_metadata_augmented.csv"
+    output:
+        "results/{segment}/{subtype}/temporal_trees/{temporal_group}_tree.jsonl.gz"
+    log:
+        "logs/{segment}/{subtype}/taxonium_temporal_{temporal_group}.log"
+    shell:
+        """
+        usher_to_taxonium \
+            --input {input.tree} \
+            --metadata {input.metadata} \
+            --key_column isolate_id \
+            --columns isolate_name,subtype,clade,passage_history,location,host,host_group,geographic_group,temporal_group,collection_date \
             --output {output} \
             &> {log}
         """
@@ -569,7 +721,7 @@ rule execute_notebooks:
     input:
         notebook="notebooks/{notebook}.ipynb",
         # Ensure all main pipeline outputs are complete before running notebooks
-        metadata="results/combined_metadata_with_host_groups.csv",
+        metadata="results/combined_metadata_augmented.csv",
         ha_trees=expand("results/HA/{subtype}/final_tree.jsonl.gz",
                        subtype=config["ha_subtypes"]),
         na_trees=expand("results/NA/{subtype}/final_tree.jsonl.gz",

@@ -38,8 +38,10 @@ flu-usher/
 │   ├── convert_DAG_protobuf_to_newick_samples.py   # Sample tree from DAG
 │   ├── create_root_samples_file.py                 # Create samples file for root extraction
 │   ├── extract_root_sequence.py                    # Infer root sequence from tree
-│   ├── simplified_host_classifier.py               # Classify hosts into groups
-│   └── create_host_samples_file.py                 # Create samples file for host extraction
+│   ├── simplified_host_classifier.py               # Classify hosts into groups (used by augment_metadata.py)
+│   ├── augment_metadata.py                         # Add host, geographic, and temporal group columns to metadata
+│   ├── create_samples_file.py                      # Create samples file for subtree extraction (generic column filter)
+│   └── create_temporal_samples_file.py             # Create samples file for temporal subtree extraction
 └── notebooks/               # Jupyter notebooks for development and analysis
 ```
 
@@ -78,6 +80,8 @@ flu-usher/
    - Set number of randomizations for tree building (n_randomizations, default: 10)
    - Set desired number of threads
    - Specify host groups to extract for host-specific subtree analysis (host_groups_to_extract)
+   - Specify geographic groups to extract (geographic_groups_to_extract)
+   - Specify temporal groups to extract (temporal_groups_to_extract)
    - Optionally specify rerooting nodes for final trees (reroot)
 
 3. **Prepare your GISAID data**
@@ -128,13 +132,21 @@ flu-usher/
      - `{host_group}_samples.txt`: Sample list for each host group
      - `{host_group}_tree.pb.gz`: Extracted subtree for each host group
      - `{host_group}_tree.jsonl.gz`: Taxonium visualization for each host group
+   - `geographic_trees/`: Geographic subtree visualizations
+     - `{geo_group}_samples.txt`: Sample list for each geographic group
+     - `{geo_group}_tree.pb.gz`: Extracted subtree for each geographic group
+     - `{geo_group}_tree.jsonl.gz`: Taxonium visualization for each geographic group
+   - `temporal_trees/`: Temporal subtree visualizations (early/late split at per-tree median date)
+     - `{temporal_group}_samples.txt`: Sample list for each temporal group
+     - `{temporal_group}_tree.pb.gz`: Extracted subtree for each temporal group
+     - `{temporal_group}_tree.jsonl.gz`: Taxonium visualization for each temporal group
    
    **For the other segments** (e.g., `results/PB2/all/` or `results/NP/all/`):
    - Same outputs as above, but combining all influenza subtypes
 
    **Global outputs**:
    - `results/combined_metadata.csv`: Aggregated metadata from all input files
-   - `results/combined_metadata_with_host_groups.csv`: Metadata with host group classifications added
+   - `results/combined_metadata_augmented.csv`: Metadata with host_group, geographic_group, and temporal_group columns added
    - `results/notebooks/`: Executed analysis notebooks
      - `analyze_metadata.html`: Metadata analysis report
      - `analyze_alignments.html`: Alignment statistics report
@@ -208,17 +220,20 @@ flu-usher/
     - If rerooted: Infers root sequence from tree mutations
     - If not rerooted: Uses reference sequence as root
 
-16. **Add host groups** (`simplified_host_classifier.py`):
-    - Classifies hosts into simplified groups
-    - Adds host_group column to metadata
+16. **Augment metadata** (`augment_metadata.py`):
+    - Adds host_group column (human, avian, swine, bovine, other)
+    - Adds geographic_group column (north_america, europe, asia, other)
+    - Adds temporal_group column (early, late, unknown based on global median date)
 
-17. **Extract host-specific subtrees** (matUtils extract):
-    - Creates separate subtrees for each host group
-    - Includes all samples from the specified host group plus the root
+17. **Extract subtrees** (matUtils extract):
+    - Creates separate subtrees for each host group, geographic region, and temporal period
+    - Host and geographic subtrees filter by metadata column
+    - Temporal subtrees compute per-tree median collection date for balanced early/late splits
+    - Each subtree includes the root sequence plus matching samples
 
 18. **Create visualizations** (usher_to_taxonium):
-    - Converts final tree and host-specific subtrees to Taxonium format
-    - Incorporates metadata for interactive exploration
+    - Converts final tree and all subtrees to Taxonium format
+    - Incorporates metadata (including host, geographic, and temporal groups) for interactive exploration
 
 19. **Execute analysis notebooks** (jupyter nbconvert):
     - Runs analysis notebooks after all pipeline outputs are complete
