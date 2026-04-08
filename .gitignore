@@ -6,3 +6,4 @@ sbatch*
 run.sbatch
 scripts/__pycache__/
 scripts/copy_to_shared.sh
+.claude
