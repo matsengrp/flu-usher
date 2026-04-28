@@ -80,7 +80,6 @@ flu-usher/
    - Adjust filtering thresholds for sequence curation (max_frac_gaps, max_frac_ambig)
    - Set number of randomizations for tree building (n_randomizations, default: 10)
    - Set desired number of threads
-   - Specify host groups to extract for host-specific subtree analysis (host_groups_to_extract)
    - Specify geographic groups to extract (geographic_groups_to_extract)
    - Specify temporal groups to extract (temporal_groups_to_extract)
    - Optionally specify rerooting nodes for final trees (reroot)
@@ -129,10 +128,6 @@ flu-usher/
    - `sampled_tree.pb.gz`: MAT protobuf of sampled tree
    - `final_tree.pb.gz`: Final tree (rerooted if specified in config)
    - `final_tree.jsonl.gz`: Interactive Taxonium visualization file
-   - `host_specific_trees/`: Host-specific subtree visualizations
-     - `{host_group}_samples.txt`: Sample list for each host group
-     - `{host_group}_tree.pb.gz`: Extracted subtree for each host group
-     - `{host_group}_tree.jsonl.gz`: Taxonium visualization for each host group
    - `geographic_trees/`: Geographic subtree visualizations
      - `{geo_group}_samples.txt`: Sample list for each geographic group
      - `{geo_group}_tree.pb.gz`: Extracted subtree for each geographic group
@@ -231,8 +226,8 @@ flu-usher/
     - Adds temporal_group column (early, late, unknown based on global median date)
 
 17. **Extract subtrees** (matUtils extract):
-    - Creates separate subtrees for each host group, geographic region, and temporal period
-    - Host and geographic subtrees filter by metadata column
+    - Creates separate subtrees for each geographic region and temporal period
+    - Geographic subtrees filter by metadata column
     - Temporal subtrees compute per-tree median collection date for balanced early/late splits
     - Each subtree includes the root sequence plus matching samples
 

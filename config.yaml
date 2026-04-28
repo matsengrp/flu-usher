@@ -103,12 +103,6 @@ reroot:
   "MP_all": "EPI_ISL_5886"
   "NS_all": "EPI_ISL_5886"
 
-# Host-specific subtree extraction
-host_groups_to_extract:
-  - "human"
-  - "avian"
-  - "swine"
-
 # Geographic subtree extraction
 geographic_groups_to_extract:
   - "north_america"

@@ -12,10 +12,6 @@ rule all:
         # Unaligned coding sequences for HA segments by subtype (per-gene output directories)
         expand("results/HA/{subtype}/unaligned_coding_seqs/",
                subtype=config["ha_subtypes"]),
-        # Host-specific Taxonium visualizations for HA segments by subtype
-        expand("results/HA/{subtype}/host_specific_trees/{host_group}_tree.jsonl.gz",
-               subtype=config["ha_subtypes"],
-               host_group=config["host_groups_to_extract"]),
         # Geographic Taxonium visualizations for HA segments by subtype
         expand("results/HA/{subtype}/geographic_trees/{geo_group}_tree.jsonl.gz",
                subtype=config["ha_subtypes"],
@@ -30,10 +26,6 @@ rule all:
         # Unaligned coding sequences for NA segments by subtype (per-gene output directories)
         expand("results/NA/{subtype}/unaligned_coding_seqs/",
                subtype=config["na_subtypes"]),
-        # Host-specific Taxonium visualizations for NA segments by subtype
-        expand("results/NA/{subtype}/host_specific_trees/{host_group}_tree.jsonl.gz",
-               subtype=config["na_subtypes"],
-               host_group=config["host_groups_to_extract"]),
         # Geographic Taxonium visualizations for NA segments by subtype
         expand("results/NA/{subtype}/geographic_trees/{geo_group}_tree.jsonl.gz",
                subtype=config["na_subtypes"],
@@ -48,10 +40,6 @@ rule all:
         # Unaligned coding sequences for other segments (all subtypes combined, per-gene output directories)
         expand("results/{segment}/all/unaligned_coding_seqs/",
                segment=[s for s in config["segments"] if s not in ["HA", "NA"]]),
-        # Host-specific Taxonium visualizations for other segments (all subtypes combined)
-        expand("results/{segment}/all/host_specific_trees/{host_group}_tree.jsonl.gz",
-               segment=[s for s in config["segments"] if s not in ["HA", "NA"]],
-               host_group=config["host_groups_to_extract"]),
         # Geographic Taxonium visualizations for other segments (all subtypes combined)
         expand("results/{segment}/all/geographic_trees/{geo_group}_tree.jsonl.gz",
                segment=[s for s in config["segments"] if s not in ["HA", "NA"]],
@@ -498,49 +486,6 @@ rule augment_metadata:
         python scripts/augment_metadata.py {input.metadata} {output} 2> {log}
         """
 
-# Create samples file for host-specific subtree extraction
-rule create_host_samples_file:
-    conda: "envs/python.yaml"
-    input:
-        curated_msa="results/{segment}/{subtype}/curated_msa.fasta.xz",
-        metadata="results/combined_metadata_augmented.csv",
-        root="results/{segment}/{subtype}/curated_root.fasta"
-    output:
-        "results/{segment}/{subtype}/host_specific_trees/{host_group}_samples.txt"
-    log:
-        "logs/{segment}/{subtype}/create_host_samples_{host_group}.log"
-    shell:
-        """
-        python scripts/create_samples_file.py \
-            --curated-msa {input.curated_msa} \
-            --metadata {input.metadata} \
-            --column host_group \
-            --value {wildcards.host_group} \
-            --root {input.root} \
-            --output {output} \
-            &> {log}
-        """
-
-# Extract host-specific subtree using matUtils, collapsing trees before outputting
-rule extract_host_subtree:
-    conda: "envs/usher.yaml"
-    input:
-        tree="results/{segment}/{subtype}/final_tree.pb.gz",
-        samples="results/{segment}/{subtype}/host_specific_trees/{host_group}_samples.txt"
-    output:
-        "results/{segment}/{subtype}/host_specific_trees/{host_group}_tree.pb.gz"
-    log:
-        "logs/{segment}/{subtype}/extract_host_subtree_{host_group}.log"
-    shell:
-        """
-        matUtils extract \
-            -i {input.tree} \
-            -s {input.samples} \
-            -O \
-            -o {output} \
-            &> {log}
-        """
-
 # Convert the final tree to Taxonium format for visualization
 rule convert_to_taxonium:
     conda: "envs/taxonium.yaml"
@@ -555,27 +500,6 @@ rule convert_to_taxonium:
         """
         usher_to_taxonium \
             --input {input.final_tree} \
-            --metadata {input.metadata} \
-            --key_column isolate_id \
-            --columns isolate_name,subtype,clade,passage_history,location,host,host_group,geographic_group,temporal_group,collection_date \
-            --output {output} \
-            &> {log}
-        """
-
-# Convert host-specific subtrees to Taxonium format for visualization
-rule convert_host_subtree_to_taxonium:
-    conda: "envs/taxonium.yaml"
-    input:
-        tree="results/{segment}/{subtype}/host_specific_trees/{host_group}_tree.pb.gz",
-        metadata="results/combined_metadata_augmented.csv"
-    output:
-        "results/{segment}/{subtype}/host_specific_trees/{host_group}_tree.jsonl.gz"
-    log:
-        "logs/{segment}/{subtype}/taxonium_host_{host_group}.log"
-    shell:
-        """
-        usher_to_taxonium \
-            --input {input.tree} \
             --metadata {input.metadata} \
             --key_column isolate_id \
             --columns isolate_name,subtype,clade,passage_history,location,host,host_group,geographic_group,temporal_group,collection_date \
