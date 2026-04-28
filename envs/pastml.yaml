@@ -1,0 +1,10 @@
+name: pastml
+
+channels:
+  - https://prefix.dev/conda-forge
+  - https://prefix.dev/bioconda
+  - nodefaults
+
+dependencies:
+  - python=3.10
+  - pastml

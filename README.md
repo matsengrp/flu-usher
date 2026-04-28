@@ -41,7 +41,8 @@ flu-usher/
 │   ├── simplified_host_classifier.py               # Classify hosts into groups (used by augment_metadata.py)
 │   ├── augment_metadata.py                         # Add host, geographic, and temporal group columns to metadata
 │   ├── create_samples_file.py                      # Create samples file for subtree extraction (generic column filter)
-│   └── create_temporal_samples_file.py             # Create samples file for temporal subtree extraction
+│   ├── create_temporal_samples_file.py             # Create samples file for temporal subtree extraction
+│   └── prepare_host_annotation.py                  # Build 2-col CSV (isolate_id, host_group) for PastML
 └── notebooks/               # Jupyter notebooks for development and analysis
 ```
 
@@ -140,6 +141,10 @@ flu-usher/
      - `{temporal_group}_samples.txt`: Sample list for each temporal group
      - `{temporal_group}_tree.pb.gz`: Extracted subtree for each temporal group
      - `{temporal_group}_tree.jsonl.gz`: Taxonium visualization for each temporal group
+   - `host_ancestral/`: Per-node host inference (PastML / DOWNPASS)
+     - `combined_ancestral_states.tab`: Tab-separated file of inferred `host_group` for every node (leaves + internals); the `node` column joins to internal node IDs in `final_tree.pb.gz`. Ambiguous internals may appear on multiple rows (one per equally-parsimonious state).
+     - `host_tree.html`: Interactive PastML visualization of the ancestral reconstruction.
+     - `named.tree_final_tree.nwk`: PastML's labeled-tree output (identical names to `final_tree.nwk` here).
    
    **For the other segments** (e.g., `results/PB2/all/` or `results/NP/all/`):
    - Same outputs as above, but combining all influenza subtypes
@@ -231,11 +236,18 @@ flu-usher/
     - Temporal subtrees compute per-tree median collection date for balanced early/late splits
     - Each subtree includes the root sequence plus matching samples
 
-18. **Create visualizations** (usher_to_taxonium):
+18. **Infer per-node host states** (PastML, `prepare_host_annotation.py`):
+    - Builds a 2-column annotation table from `combined_metadata_augmented.csv` mapping `isolate_id → host_group`
+    - Runs PastML with the DOWNPASS parsimony method on `final_tree.nwk` to reconstruct `host_group` for every internal node
+    - **Inputs:** `final_tree.nwk`, `combined_metadata_augmented.csv`
+    - **Outputs:** `host_ancestral/combined_ancestral_states.tab` (per-node host_group; node IDs match `final_tree.pb.gz`), `host_ancestral/host_tree.html` (interactive viz), `host_ancestral/named.tree_final_tree.nwk`
+    - Ambiguous internals appear on multiple rows of `combined_ancestral_states.tab` (one per equally-parsimonious state)
+
+19. **Create visualizations** (usher_to_taxonium):
     - Converts final tree and all subtrees to Taxonium format
     - Incorporates metadata (including host, geographic, and temporal groups) for interactive exploration
 
-19. **Execute analysis notebooks** (jupyter nbconvert):
+20. **Execute analysis notebooks** (jupyter nbconvert):
     - Runs analysis notebooks after all pipeline outputs are complete
     - Generates HTML reports in `results/notebooks/`
     - Includes metadata analysis and alignment statistics

@@ -69,6 +69,15 @@ rule all:
         # Newick trees for other segments (all subtypes combined)
         expand("results/{segment}/all/final_tree.nwk",
                segment=[s for s in config["segments"] if s not in ["HA", "NA"]]),
+        # Per-node host inference for HA segments by subtype
+        expand("results/HA/{subtype}/host_ancestral/combined_ancestral_states.tab",
+               subtype=config["ha_subtypes"]),
+        # Per-node host inference for NA segments by subtype
+        expand("results/NA/{subtype}/host_ancestral/combined_ancestral_states.tab",
+               subtype=config["na_subtypes"]),
+        # Per-node host inference for other segments (all subtypes combined)
+        expand("results/{segment}/all/host_ancestral/combined_ancestral_states.tab",
+               segment=[s for s in config["segments"] if s not in ["HA", "NA"]]),
         # Executed analysis notebooks
         "results/notebooks/analyze_metadata.done",
         "results/notebooks/analyze_alignments.done",
@@ -713,6 +722,49 @@ rule extract_final_newick:
     shell:
         """
         matUtils extract -i {input.tree} -t {output.newick} &> {log}
+        """
+
+# Build a 2-column (isolate_id, host_group) CSV for PastML's --data argument
+rule prepare_host_annotation:
+    conda: "envs/python.yaml"
+    input:
+        metadata="results/combined_metadata_augmented.csv"
+    output:
+        "results/{segment}/{subtype}/host_annotation.csv"
+    log:
+        "logs/{segment}/{subtype}/prepare_host_annotation.log"
+    shell:
+        """
+        python scripts/prepare_host_annotation.py {input.metadata} {output} &> {log}
+        """
+
+# Infer host_group at every internal node via PastML / DOWNPASS parsimony.
+# PastML preserves matUtils' node names verbatim when every node is uniquely named,
+# so the 'node' column of combined_ancestral_states.tab joins directly to final_tree.pb.gz.
+rule infer_node_hosts:
+    conda: "envs/pastml.yaml"
+    input:
+        tree="results/{segment}/{subtype}/final_tree.nwk",
+        annotation="results/{segment}/{subtype}/host_annotation.csv"
+    output:
+        states="results/{segment}/{subtype}/host_ancestral/combined_ancestral_states.tab",
+        html="results/{segment}/{subtype}/host_ancestral/host_tree.html"
+    params:
+        work_dir="results/{segment}/{subtype}/host_ancestral"
+    log:
+        "logs/{segment}/{subtype}/infer_node_hosts.log"
+    shell:
+        """
+        pastml \
+            --tree {input.tree} \
+            --data {input.annotation} \
+            --data_sep , \
+            --id_index 0 \
+            --columns host_group \
+            --prediction_method DOWNPASS \
+            --work_dir {params.work_dir} \
+            --html_compressed {output.html} \
+            &> {log}
         """
 
 # Execute analysis notebooks and generate HTML reports
