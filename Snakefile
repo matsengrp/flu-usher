@@ -724,15 +724,16 @@ rule extract_final_newick:
         matUtils extract -i {input.tree} -t {output.newick} &> {log}
         """
 
-# Build a 2-column (isolate_id, host_group) CSV for PastML's --data argument
+# Build a 2-column (isolate_id, host_group) CSV for PastML's --data argument.
+# Single global file shared across all (segment, subtype) PastML runs.
 rule prepare_host_annotation:
     conda: "envs/python.yaml"
     input:
         metadata="results/combined_metadata_augmented.csv"
     output:
-        "results/{segment}/{subtype}/host_annotation.csv"
+        "results/host_annotation.csv"
     log:
-        "logs/{segment}/{subtype}/prepare_host_annotation.log"
+        "logs/prepare_host_annotation.log"
     shell:
         """
         python scripts/prepare_host_annotation.py {input.metadata} {output} &> {log}
@@ -745,7 +746,7 @@ rule infer_node_hosts:
     conda: "envs/pastml.yaml"
     input:
         tree="results/{segment}/{subtype}/final_tree.nwk",
-        annotation="results/{segment}/{subtype}/host_annotation.csv"
+        annotation="results/host_annotation.csv"
     output:
         states="results/{segment}/{subtype}/host_ancestral/combined_ancestral_states.tab",
         html="results/{segment}/{subtype}/host_ancestral/host_tree.html"
