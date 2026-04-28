@@ -32,9 +32,6 @@ snakemake --cores 8 --use-conda results/HA/H5/final_tree.jsonl.gz
 snakemake --cores 8 --use-conda results/NA/N1/final_tree.jsonl.gz
 snakemake --cores 8 --use-conda results/PB2/all/final_tree.jsonl.gz
 
-# Run for host-specific subtrees
-snakemake --cores 8 --use-conda results/HA/H5/host_specific_trees/avian_tree.jsonl.gz
-
 # Run for geographic subtrees
 snakemake --cores 8 --use-conda results/HA/H5/geographic_trees/north_america_tree.jsonl.gz
 
@@ -79,10 +76,6 @@ results/
 │   │   ├── trimmed_dag.pb
 │   │   ├── sampled_tree.{nh,pb.gz}
 │   │   ├── final_tree.{pb.gz,jsonl.gz}
-│   │   ├── host_specific_trees/
-│   │   │   ├── {host_group}_samples.txt
-│   │   │   ├── {host_group}_tree.pb.gz
-│   │   │   └── {host_group}_tree.jsonl.gz
 │   │   ├── geographic_trees/
 │   │   │   ├── {geo_group}_samples.txt
 │   │   │   ├── {geo_group}_tree.pb.gz
@@ -117,7 +110,6 @@ results/
    - Quality filtering thresholds (max_frac_gaps, max_frac_ambig)
    - Number of randomizations for tree building (n_randomizations)
    - Number of threads for parallel execution
-   - Host groups to extract for host-specific subtree analysis (host_groups_to_extract)
    - Geographic groups to extract for geographic subtree analysis (geographic_groups_to_extract)
    - Temporal groups to extract for temporal subtree analysis (temporal_groups_to_extract)
    - Optional rerooting specifications for final trees (reroot)
@@ -159,7 +151,7 @@ results/
 15. **Reroot Tree** → Optionally reroots tree at specified node (matUtils extract)
 16. **Create Root Sequence** → Infers root sequence from tree or uses reference
 17. **Augment Metadata** → Adds host_group, geographic_group, and temporal_group columns
-18. **Extract Subtrees** → Creates subtrees for each host group, geographic region, and temporal period (matUtils extract)
+18. **Extract Subtrees** → Creates subtrees for each geographic region and temporal period (matUtils extract)
 19. **Create Visualizations** → Generates Taxonium format for full tree and all subtrees
 
 ### Input Data Requirements
@@ -178,6 +170,6 @@ The pipeline expects GISAID data in each input directory:
 - Reference sequences are specified in config.yaml and can be customized
 - The pipeline uses a DAG-based approach (via larch and historydag) to build consensus trees from multiple randomized alignments
 - Multiple randomizations help explore tree space and produce more robust phylogenies
-- Subtrees are automatically extracted for specified host groups (e.g., human, avian, swine), geographic regions (e.g., north_america, europe, asia), and temporal periods (early/late split at per-tree median collection date)
+- Subtrees are automatically extracted for specified geographic regions (e.g., north_america, europe, asia) and temporal periods (early/late split at per-tree median collection date)
 - Trees can be optionally rerooted using the `reroot` configuration parameter
 - The final outputs are interactive Taxonium visualization files (.jsonl.gz)
