@@ -109,7 +109,6 @@ geographic_groups_to_extract:
   - "europe"
   - "asia"
 
-# Temporal subtree extraction (per-tree median date split)
-temporal_groups_to_extract:
-  - "early"
-  - "late"
+# Chronumental: extra CLI flags passed to `chronumental` per tree.
+# --steps controls optimization iterations (matches flu-mut-fitness default).
+chronumental_kwargs: "--steps 5000"
