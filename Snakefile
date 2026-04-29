@@ -16,10 +16,6 @@ rule all:
         expand("results/HA/{subtype}/geographic_trees/{geo_group}_tree.jsonl.gz",
                subtype=config["ha_subtypes"],
                geo_group=config["geographic_groups_to_extract"]),
-        # Temporal Taxonium visualizations for HA segments by subtype
-        expand("results/HA/{subtype}/temporal_trees/{temporal_group}_tree.jsonl.gz",
-               subtype=config["ha_subtypes"],
-               temporal_group=config["temporal_groups_to_extract"]),
         # Taxonium visualization trees for NA segments by subtype
         expand("results/NA/{subtype}/final_tree.jsonl.gz",
                subtype=config["na_subtypes"]),
@@ -30,10 +26,6 @@ rule all:
         expand("results/NA/{subtype}/geographic_trees/{geo_group}_tree.jsonl.gz",
                subtype=config["na_subtypes"],
                geo_group=config["geographic_groups_to_extract"]),
-        # Temporal Taxonium visualizations for NA segments by subtype
-        expand("results/NA/{subtype}/temporal_trees/{temporal_group}_tree.jsonl.gz",
-               subtype=config["na_subtypes"],
-               temporal_group=config["temporal_groups_to_extract"]),
         # Taxonium visualization trees for other segments (all subtypes combined)
         expand("results/{segment}/all/final_tree.jsonl.gz",
                segment=[s for s in config["segments"] if s not in ["HA", "NA"]]),
@@ -44,10 +36,8 @@ rule all:
         expand("results/{segment}/all/geographic_trees/{geo_group}_tree.jsonl.gz",
                segment=[s for s in config["segments"] if s not in ["HA", "NA"]],
                geo_group=config["geographic_groups_to_extract"]),
-        # Temporal Taxonium visualizations for other segments (all subtypes combined)
-        expand("results/{segment}/all/temporal_trees/{temporal_group}_tree.jsonl.gz",
-               segment=[s for s in config["segments"] if s not in ["HA", "NA"]],
-               temporal_group=config["temporal_groups_to_extract"]),
+        # Chronumental dating summary across all final trees
+        "results/chronumental_summary.html",
         # Newick trees for HA segments by subtype
         expand("results/HA/{subtype}/final_tree.nwk",
                subtype=config["ha_subtypes"]),
@@ -472,7 +462,7 @@ rule create_root_fasta:
         """
 
 
-# Augment combined metadata with host_group, geographic_group, and temporal_group columns
+# Augment combined metadata with host_group and geographic_group columns
 rule augment_metadata:
     conda: "envs/python.yaml"
     input:
@@ -502,7 +492,7 @@ rule convert_to_taxonium:
             --input {input.final_tree} \
             --metadata {input.metadata} \
             --key_column isolate_id \
-            --columns isolate_name,subtype,clade,passage_history,location,host,host_group,geographic_group,temporal_group,collection_date \
+            --columns isolate_name,subtype,clade,passage_history,location,host,host_group,geographic_group,collection_date \
             --output {output} \
             &> {log}
         """
@@ -566,73 +556,72 @@ rule convert_geographic_subtree_to_taxonium:
             --input {input.tree} \
             --metadata {input.metadata} \
             --key_column isolate_id \
-            --columns isolate_name,subtype,clade,passage_history,location,host,host_group,geographic_group,temporal_group,collection_date \
+            --columns isolate_name,subtype,clade,passage_history,location,host,host_group,geographic_group,collection_date \
             --output {output} \
             &> {log}
         """
 
-# Create samples file for temporal subtree extraction (per-tree median date split)
-rule create_temporal_samples_file:
+# Build the global strain<TAB>date TSV consumed by all chronumental jobs.
+# Chronumental ignores strains in this file that aren't present in a given
+# tree, so a single global file works for every (segment, subtype) tree.
+rule prepare_chronumental_dates:
     conda: "envs/python.yaml"
     input:
-        curated_msa="results/{segment}/{subtype}/curated_msa.fasta.xz",
-        metadata="results/combined_metadata_augmented.csv",
-        root="results/{segment}/{subtype}/curated_root.fasta"
-    output:
-        "results/{segment}/{subtype}/temporal_trees/{temporal_group}_samples.txt"
-    log:
-        "logs/{segment}/{subtype}/create_temporal_samples_{temporal_group}.log"
-    shell:
-        """
-        python scripts/create_temporal_samples_file.py \
-            --curated-msa {input.curated_msa} \
-            --metadata {input.metadata} \
-            --temporal-group {wildcards.temporal_group} \
-            --root {input.root} \
-            --output {output} \
-            &> {log}
-        """
-
-# Extract temporal subtree using matUtils, collapsing trees before outputting
-rule extract_temporal_subtree:
-    conda: "envs/usher.yaml"
-    input:
-        tree="results/{segment}/{subtype}/final_tree.pb.gz",
-        samples="results/{segment}/{subtype}/temporal_trees/{temporal_group}_samples.txt"
-    output:
-        "results/{segment}/{subtype}/temporal_trees/{temporal_group}_tree.pb.gz"
-    log:
-        "logs/{segment}/{subtype}/extract_temporal_subtree_{temporal_group}.log"
-    shell:
-        """
-        matUtils extract \
-            -i {input.tree} \
-            -s {input.samples} \
-            -O \
-            -o {output} \
-            &> {log}
-        """
-
-# Convert temporal subtrees to Taxonium format for visualization
-rule convert_temporal_subtree_to_taxonium:
-    conda: "envs/taxonium.yaml"
-    input:
-        tree="results/{segment}/{subtype}/temporal_trees/{temporal_group}_tree.pb.gz",
         metadata="results/combined_metadata_augmented.csv"
     output:
-        "results/{segment}/{subtype}/temporal_trees/{temporal_group}_tree.jsonl.gz"
+        "results/chronumental_dates.tsv"
     log:
-        "logs/{segment}/{subtype}/taxonium_temporal_{temporal_group}.log"
+        "logs/prepare_chronumental_dates.log"
     shell:
         """
-        usher_to_taxonium \
-            --input {input.tree} \
+        python scripts/prepare_chronumental_dates.py \
             --metadata {input.metadata} \
-            --key_column isolate_id \
-            --columns isolate_name,subtype,clade,passage_history,location,host,host_group,geographic_group,temporal_group,collection_date \
             --output {output} \
             &> {log}
         """
+
+# Run chronumental on each final tree to estimate dates for every node
+# (leaves + internal). Output is a TSV with predicted dates per node.
+rule chronumental:
+    conda: "envs/chronumental.yaml"
+    input:
+        tree="results/{segment}/{subtype}/final_tree.nwk",
+        dates="results/chronumental_dates.tsv"
+    output:
+        "results/{segment}/{subtype}/chronumental/strain_date_inferred.tsv"
+    params:
+        chronumental_kwargs=config.get("chronumental_kwargs", "--steps 5000")
+    log:
+        stdout="logs/{segment}/{subtype}/chronumental.stdout",
+        stderr="logs/{segment}/{subtype}/chronumental.stderr"
+    shell:
+        """
+        chronumental \
+            --tree {input.tree} \
+            {params.chronumental_kwargs} \
+            --dates {input.dates} \
+            --dates_out {output} \
+            > {log.stdout} 2> {log.stderr}
+        """
+
+# Cross-tree summary notebook: validate predicted leaf dates against
+# reported collection dates and report per-tree QC across all trees.
+rule chronumental_summary:
+    conda: "envs/python.yaml"
+    input:
+        inferred=expand("results/HA/{subtype}/chronumental/strain_date_inferred.tsv",
+                        subtype=config["ha_subtypes"]) +
+                 expand("results/NA/{subtype}/chronumental/strain_date_inferred.tsv",
+                        subtype=config["na_subtypes"]) +
+                 expand("results/{segment}/all/chronumental/strain_date_inferred.tsv",
+                        segment=[s for s in config["segments"] if s not in ["HA", "NA"]]),
+        metadata="results/combined_metadata_augmented.csv"
+    output:
+        html="results/chronumental_summary.html"
+    log:
+        notebook="logs/chronumental_summary.ipynb"
+    notebook:
+        "notebooks/chronumental_summary.ipynb"
 
 # Extract newick tree from final protobuf tree
 rule extract_final_newick:

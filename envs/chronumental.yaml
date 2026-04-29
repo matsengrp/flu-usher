@@ -1,0 +1,10 @@
+name: chronumental
+channels:
+  - https://prefix.dev/conda-forge
+  - https://prefix.dev/bioconda
+  - nodefaults
+dependencies:
+  - python=3.9
+  - pip
+  - pip:
+      - chronumental==0.0.65
