@@ -3,6 +3,42 @@ import glob
 configfile: "config.yaml"
 
 
+# Lookup helpers for cohort subtree extraction
+_COHORTS_BY_NAME = {c["name"]: c for c in config.get("cohorts_to_extract", [])}
+
+
+def _cohort_field(name, field):
+    return _COHORTS_BY_NAME[name][field]
+
+
+def cohort_tree_targets(wildcards):
+    """Per-cohort, per-(segment, subtype) targets.
+
+    Reads each cohort's samples.txt (after the create_cohort_samples_file
+    checkpoint runs) and only requests the .jsonl.gz output when at least
+    one cohort sample joins the root in the file.
+    """
+    targets = []
+    pairs = (
+        [("HA", s) for s in config["ha_subtypes"]]
+        + [("NA", s) for s in config["na_subtypes"]]
+        + [(s, "all") for s in config["segments"] if s not in ("HA", "NA")]
+    )
+    for cohort in config.get("cohorts_to_extract", []):
+        name = cohort["name"]
+        for seg, sub in pairs:
+            samples_path = checkpoints.create_cohort_samples_file.get(
+                segment=seg, subtype=sub, cohort=name
+            ).output[0]
+            with open(samples_path) as f:
+                n_lines = sum(1 for _ in f)
+            if n_lines >= 2:
+                targets.append(
+                    f"results/{seg}/{sub}/cohort_trees/{name}_tree.jsonl.gz"
+                )
+    return targets
+
+
 # Define the final outputs that should be created for each segment-subtype combination
 rule all:
     input:
@@ -16,10 +52,6 @@ rule all:
         expand("results/HA/{subtype}/geographic_trees/{geo_group}_tree.jsonl.gz",
                subtype=config["ha_subtypes"],
                geo_group=config["geographic_groups_to_extract"]),
-        # Temporal Taxonium visualizations for HA segments by subtype
-        expand("results/HA/{subtype}/temporal_trees/{temporal_group}_tree.jsonl.gz",
-               subtype=config["ha_subtypes"],
-               temporal_group=config["temporal_groups_to_extract"]),
         # Taxonium visualization trees for NA segments by subtype
         expand("results/NA/{subtype}/final_tree.jsonl.gz",
                subtype=config["na_subtypes"]),
@@ -30,10 +62,6 @@ rule all:
         expand("results/NA/{subtype}/geographic_trees/{geo_group}_tree.jsonl.gz",
                subtype=config["na_subtypes"],
                geo_group=config["geographic_groups_to_extract"]),
-        # Temporal Taxonium visualizations for NA segments by subtype
-        expand("results/NA/{subtype}/temporal_trees/{temporal_group}_tree.jsonl.gz",
-               subtype=config["na_subtypes"],
-               temporal_group=config["temporal_groups_to_extract"]),
         # Taxonium visualization trees for other segments (all subtypes combined)
         expand("results/{segment}/all/final_tree.jsonl.gz",
                segment=[s for s in config["segments"] if s not in ["HA", "NA"]]),
@@ -44,10 +72,8 @@ rule all:
         expand("results/{segment}/all/geographic_trees/{geo_group}_tree.jsonl.gz",
                segment=[s for s in config["segments"] if s not in ["HA", "NA"]],
                geo_group=config["geographic_groups_to_extract"]),
-        # Temporal Taxonium visualizations for other segments (all subtypes combined)
-        expand("results/{segment}/all/temporal_trees/{temporal_group}_tree.jsonl.gz",
-               segment=[s for s in config["segments"] if s not in ["HA", "NA"]],
-               temporal_group=config["temporal_groups_to_extract"]),
+        # Cohort Taxonium visualizations (skipped per-tree when no samples match)
+        cohort_tree_targets,
         # Newick trees for HA segments by subtype
         expand("results/HA/{subtype}/final_tree.nwk",
                subtype=config["ha_subtypes"]),
@@ -571,38 +597,45 @@ rule convert_geographic_subtree_to_taxonium:
             &> {log}
         """
 
-# Create samples file for temporal subtree extraction (per-tree median date split)
-rule create_temporal_samples_file:
+# Create samples file for cohort subtree extraction (subtype + host + min-date)
+# Made a checkpoint so empty cohorts can be skipped via cohort_tree_targets.
+checkpoint create_cohort_samples_file:
     conda: "envs/python.yaml"
     input:
         curated_msa="results/{segment}/{subtype}/curated_msa.fasta.xz",
         metadata="results/combined_metadata_augmented.csv",
         root="results/{segment}/{subtype}/curated_root.fasta"
     output:
-        "results/{segment}/{subtype}/temporal_trees/{temporal_group}_samples.txt"
+        "results/{segment}/{subtype}/cohort_trees/{cohort}_samples.txt"
+    params:
+        subtype=lambda w: _cohort_field(w.cohort, "subtype"),
+        host=lambda w: _cohort_field(w.cohort, "host"),
+        min_date=lambda w: _cohort_field(w.cohort, "min_date"),
     log:
-        "logs/{segment}/{subtype}/create_temporal_samples_{temporal_group}.log"
+        "logs/{segment}/{subtype}/create_cohort_samples_{cohort}.log"
     shell:
         """
-        python scripts/create_temporal_samples_file.py \
+        python scripts/create_cohort_samples_file.py \
             --curated-msa {input.curated_msa} \
             --metadata {input.metadata} \
-            --temporal-group {wildcards.temporal_group} \
             --root {input.root} \
+            --subtype {params.subtype:q} \
+            --host {params.host:q} \
+            --min-date {params.min_date} \
             --output {output} \
             &> {log}
         """
 
-# Extract temporal subtree using matUtils, collapsing trees before outputting
-rule extract_temporal_subtree:
+# Extract cohort subtree using matUtils, collapsing trees before outputting
+rule extract_cohort_subtree:
     conda: "envs/usher.yaml"
     input:
         tree="results/{segment}/{subtype}/final_tree.pb.gz",
-        samples="results/{segment}/{subtype}/temporal_trees/{temporal_group}_samples.txt"
+        samples="results/{segment}/{subtype}/cohort_trees/{cohort}_samples.txt"
     output:
-        "results/{segment}/{subtype}/temporal_trees/{temporal_group}_tree.pb.gz"
+        "results/{segment}/{subtype}/cohort_trees/{cohort}_tree.pb.gz"
     log:
-        "logs/{segment}/{subtype}/extract_temporal_subtree_{temporal_group}.log"
+        "logs/{segment}/{subtype}/extract_cohort_subtree_{cohort}.log"
     shell:
         """
         matUtils extract \
@@ -613,16 +646,16 @@ rule extract_temporal_subtree:
             &> {log}
         """
 
-# Convert temporal subtrees to Taxonium format for visualization
-rule convert_temporal_subtree_to_taxonium:
+# Convert cohort subtrees to Taxonium format for visualization
+rule convert_cohort_subtree_to_taxonium:
     conda: "envs/taxonium.yaml"
     input:
-        tree="results/{segment}/{subtype}/temporal_trees/{temporal_group}_tree.pb.gz",
+        tree="results/{segment}/{subtype}/cohort_trees/{cohort}_tree.pb.gz",
         metadata="results/combined_metadata_augmented.csv"
     output:
-        "results/{segment}/{subtype}/temporal_trees/{temporal_group}_tree.jsonl.gz"
+        "results/{segment}/{subtype}/cohort_trees/{cohort}_tree.jsonl.gz"
     log:
-        "logs/{segment}/{subtype}/taxonium_temporal_{temporal_group}.log"
+        "logs/{segment}/{subtype}/taxonium_cohort_{cohort}.log"
     shell:
         """
         usher_to_taxonium \
