@@ -11,20 +11,15 @@ def _cohort_field(name, field):
     return _COHORTS_BY_NAME[name][field]
 
 
-def cohort_tree_targets(wildcards):
-    """Per-cohort, per-(segment, subtype) targets.
-
-    Reads each cohort's samples.txt (after the create_cohort_samples_file
-    checkpoint runs) and only requests downstream outputs when at least
-    one cohort sample joins the root in the file. Each non-empty cohort
-    yields a taxonium .jsonl.gz and a chronumental dates TSV.
-    """
-    targets = []
+def _non_empty_cohort_combos():
+    """Return list of (segment, subtype, cohort_name) triples that have
+    at least one cohort sample beyond the root in their samples.txt."""
     pairs = (
         [("HA", s) for s in config["ha_subtypes"]]
         + [("NA", s) for s in config["na_subtypes"]]
         + [(s, "all") for s in config["segments"] if s not in ("HA", "NA")]
     )
+    combos = []
     for cohort in config.get("cohorts_to_extract", []):
         name = cohort["name"]
         for seg, sub in pairs:
@@ -34,13 +29,28 @@ def cohort_tree_targets(wildcards):
             with open(samples_path) as f:
                 n_lines = sum(1 for _ in f)
             if n_lines >= 2:
-                targets.append(
-                    f"results/{seg}/{sub}/cohort_trees/{name}_tree.jsonl.gz"
-                )
-                targets.append(
-                    f"results/{seg}/{sub}/cohort_trees/{name}_dates.tsv"
-                )
-    return targets
+                combos.append((seg, sub, name))
+    return combos
+
+
+def cohort_tree_targets(wildcards):
+    """Taxonium + chronumental targets for every non-empty cohort tree."""
+    return [
+        path
+        for seg, sub, name in _non_empty_cohort_combos()
+        for path in (
+            f"results/{seg}/{sub}/cohort_trees/{name}_tree.jsonl.gz",
+            f"results/{seg}/{sub}/cohort_trees/{name}_dates.tsv",
+        )
+    ]
+
+
+def cohort_dates_targets(wildcards):
+    """Chronumental dates TSV for every non-empty cohort tree."""
+    return [
+        f"results/{seg}/{sub}/cohort_trees/{name}_dates.tsv"
+        for seg, sub, name in _non_empty_cohort_combos()
+    ]
 
 
 # Define the final outputs that should be created for each segment-subtype combination
@@ -78,6 +88,8 @@ rule all:
                geo_group=config["geographic_groups_to_extract"]),
         # Cohort Taxonium visualizations (skipped per-tree when no samples match)
         cohort_tree_targets,
+        # Cross-cohort chronumental dating QC report
+        "results/cohort_dating_summary.html",
         # Newick trees for HA segments by subtype
         expand("results/HA/{subtype}/final_tree.nwk",
                subtype=config["ha_subtypes"]),
@@ -713,6 +725,21 @@ rule chronumental_cohort:
             --dates_out {output} \
             > {log.stdout} 2> {log.stderr}
         """
+
+# Cross-cohort QC notebook: per-cohort residuals, reported-vs-inferred
+# scatter for leaves, and histogram of inferred dates over all nodes.
+rule cohort_dating_summary:
+    conda: "envs/python.yaml"
+    input:
+        dates=cohort_dates_targets,
+        metadata="results/combined_metadata_augmented.csv"
+    output:
+        html="results/cohort_dating_summary.html"
+    log:
+        notebook="logs/cohort_dating_summary.ipynb"
+    notebook:
+        "notebooks/cohort_dating_summary.ipynb"
+
 
 # Convert cohort subtrees to Taxonium format for visualization
 rule convert_cohort_subtree_to_taxonium:
