@@ -46,6 +46,10 @@ def main():
     parser.add_argument("--min-date", required=True,
                         help="ISO date 'YYYY-MM-DD'; samples with collection_date strictly after this are kept")
     parser.add_argument("--output", required=True, help="Output samples.txt file path")
+    parser.add_argument("--reference-output", required=True,
+                        help="Output file holding the isolate_id of the earliest non-root "
+                             "cohort sample (used as chronumental --reference_node). "
+                             "Empty if no cohort samples were found.")
     args = parser.parse_args()
 
     min_date = parse_iso_date(args.min_date)
@@ -121,6 +125,22 @@ def main():
 
     total = 1 + len(sorted_samples)
     print(f"Wrote {total} samples to {args.output} (1 root + {len(sorted_samples)} cohort)")
+
+    # Pick the earliest cohort sample (excluding root) as a chronumental reference.
+    # Cohort filtering already required a valid parsed_date, so earliest is well-defined
+    # whenever the cohort is non-empty.
+    cohort_df = after_date[after_date["isolate_id"].isin(cohort_sample_ids - {root_name})]
+    if len(cohort_df) == 0:
+        with open(args.reference_output, "w") as f:
+            pass
+        print(f"Wrote empty reference file to {args.reference_output} (no cohort samples)")
+    else:
+        earliest = cohort_df.loc[cohort_df["parsed_date"].idxmin()]
+        ref_id = earliest["isolate_id"]
+        ref_date = earliest["parsed_date"].date()
+        with open(args.reference_output, "w") as f:
+            f.write(f"{ref_id}\n")
+        print(f"Earliest non-root cohort sample: {ref_id} ({ref_date}); wrote to {args.reference_output}")
 
 
 if __name__ == "__main__":

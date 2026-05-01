@@ -122,3 +122,7 @@ cohorts_to_extract:
     subtype: "H1N1"
     host: "human"
     min_date: "2012-01-01"
+
+# Chronumental: extra CLI flags passed to `chronumental` for cohort tree dating.
+# --steps controls optimization iterations (matches flu-mut-fitness default).
+chronumental_kwargs: "--steps 5000"

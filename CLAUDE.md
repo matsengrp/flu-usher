@@ -126,7 +126,8 @@ results/
    - `simplified_host_classifier.py`: Host classification logic (used by augment_metadata.py)
    - `augment_metadata.py`: Adds host_group, geographic_group, and temporal_group columns to metadata
    - `create_samples_file.py`: Creates sample files for subtree extraction by any metadata column
-   - `create_cohort_samples_file.py`: Creates sample files for cohort subtree extraction (combined subtype + host + min-date filter)
+   - `create_cohort_samples_file.py`: Creates sample files for cohort subtree extraction (combined subtype + host + min-date filter); also writes the earliest non-root cohort sample to a sidecar file used as the chronumental reference node
+   - `prepare_chronumental_dates.py`: Builds the global `strain<TAB>date` TSV consumed by every chronumental job
 
 4. **notebooks/**: Jupyter notebooks for analysis and development
    - `analyze_alignments.ipynb`: Analyzes sequence statistics across segments/subtypes
@@ -152,6 +153,7 @@ results/
 16. **Create Root Sequence** → Infers root sequence from tree or uses reference
 17. **Augment Metadata** → Adds host_group, geographic_group, and temporal_group columns
 18. **Extract Subtrees** → Creates subtrees for each geographic region and each configured cohort (matUtils extract); cohorts with no matching samples in a given tree are skipped
+19. **Date Cohort Subtrees** → Runs chronumental on each cohort newick to infer dates for every node, anchored on the earliest non-root cohort sample as the reference
 19. **Create Visualizations** → Generates Taxonium format for full tree and all subtrees
 
 ### Input Data Requirements

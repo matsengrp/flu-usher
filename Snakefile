@@ -15,8 +15,9 @@ def cohort_tree_targets(wildcards):
     """Per-cohort, per-(segment, subtype) targets.
 
     Reads each cohort's samples.txt (after the create_cohort_samples_file
-    checkpoint runs) and only requests the .jsonl.gz output when at least
-    one cohort sample joins the root in the file.
+    checkpoint runs) and only requests downstream outputs when at least
+    one cohort sample joins the root in the file. Each non-empty cohort
+    yields a taxonium .jsonl.gz and a chronumental dates TSV.
     """
     targets = []
     pairs = (
@@ -35,6 +36,9 @@ def cohort_tree_targets(wildcards):
             if n_lines >= 2:
                 targets.append(
                     f"results/{seg}/{sub}/cohort_trees/{name}_tree.jsonl.gz"
+                )
+                targets.append(
+                    f"results/{seg}/{sub}/cohort_trees/{name}_dates.tsv"
                 )
     return targets
 
@@ -606,7 +610,8 @@ checkpoint create_cohort_samples_file:
         metadata="results/combined_metadata_augmented.csv",
         root="results/{segment}/{subtype}/curated_root.fasta"
     output:
-        "results/{segment}/{subtype}/cohort_trees/{cohort}_samples.txt"
+        samples="results/{segment}/{subtype}/cohort_trees/{cohort}_samples.txt",
+        reference="results/{segment}/{subtype}/cohort_trees/{cohort}_reference_sample.txt"
     params:
         subtype=lambda w: _cohort_field(w.cohort, "subtype"),
         host=lambda w: _cohort_field(w.cohort, "host"),
@@ -622,7 +627,8 @@ checkpoint create_cohort_samples_file:
             --subtype {params.subtype:q} \
             --host {params.host:q} \
             --min-date {params.min_date} \
-            --output {output} \
+            --output {output.samples} \
+            --reference-output {output.reference} \
             &> {log}
         """
 
@@ -644,6 +650,68 @@ rule extract_cohort_subtree:
             -O \
             -o {output} \
             &> {log}
+        """
+
+# Build the global strain<TAB>date TSV consumed by every chronumental job.
+# Chronumental ignores strains in this file that aren't present in a given
+# tree, so a single global file works for every cohort.
+rule prepare_chronumental_dates:
+    conda: "envs/python.yaml"
+    input:
+        metadata="results/combined_metadata_augmented.csv"
+    output:
+        "results/chronumental_dates.tsv"
+    log:
+        "logs/prepare_chronumental_dates.log"
+    shell:
+        """
+        python scripts/prepare_chronumental_dates.py \
+            --metadata {input.metadata} \
+            --output {output} \
+            &> {log}
+        """
+
+# Extract a Newick file from each cohort MAT for chronumental.
+rule extract_cohort_newick:
+    conda: "envs/usher.yaml"
+    input:
+        tree="results/{segment}/{subtype}/cohort_trees/{cohort}_tree.pb.gz"
+    output:
+        newick="results/{segment}/{subtype}/cohort_trees/{cohort}_tree.nwk"
+    log:
+        "logs/{segment}/{subtype}/extract_cohort_newick_{cohort}.log"
+    shell:
+        """
+        matUtils extract -i {input.tree} -t {output.newick} &> {log}
+        """
+
+# Run chronumental on each cohort tree to estimate dates for every node
+# (leaves + internal). Uses the earliest non-root cohort sample as the
+# reference node so chronumental anchors on a real cohort observation
+# rather than the (possibly much older) curated root.
+rule chronumental_cohort:
+    conda: "envs/chronumental.yaml"
+    input:
+        tree="results/{segment}/{subtype}/cohort_trees/{cohort}_tree.nwk",
+        dates="results/chronumental_dates.tsv",
+        reference="results/{segment}/{subtype}/cohort_trees/{cohort}_reference_sample.txt"
+    output:
+        "results/{segment}/{subtype}/cohort_trees/{cohort}_dates.tsv"
+    params:
+        chronumental_kwargs=config.get("chronumental_kwargs", "--steps 5000"),
+        reference_node=lambda w, input: open(input.reference).read().strip(),
+    log:
+        stdout="logs/{segment}/{subtype}/chronumental_cohort_{cohort}.stdout",
+        stderr="logs/{segment}/{subtype}/chronumental_cohort_{cohort}.stderr"
+    shell:
+        """
+        chronumental \
+            --tree {input.tree} \
+            {params.chronumental_kwargs} \
+            --reference_node {params.reference_node} \
+            --dates {input.dates} \
+            --dates_out {output} \
+            > {log.stdout} 2> {log.stderr}
         """
 
 # Convert cohort subtrees to Taxonium format for visualization
