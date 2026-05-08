@@ -6,6 +6,7 @@ Output format matches the other samples-file scripts: the curated root
 sequence on line 1, then matched sample IDs (sorted) on subsequent lines.
 """
 import argparse
+import fnmatch
 import lzma
 import re
 import sys
@@ -40,7 +41,9 @@ def main():
     parser.add_argument("--root", required=True,
                         help="Path to curated_root.fasta (always included as line 1)")
     parser.add_argument("--subtype", required=True,
-                        help="GISAID subtype to keep (e.g. 'H1N1'); compared after stripping 'A /'")
+                        help="GISAID subtype pattern to keep (e.g. 'H1N1' for an exact match, "
+                             "or a glob like 'H5N*' to match every H5Nx). Pattern is "
+                             "case-insensitive and applied after stripping 'A /'.")
     parser.add_argument("--host", required=True,
                         help="host_group value to keep (e.g. 'human')")
     parser.add_argument("--min-date", required=True,
@@ -57,8 +60,8 @@ def main():
         print(f"ERROR: --min-date '{args.min_date}' is not a valid YYYY-MM-DD date",
               file=sys.stderr)
         sys.exit(1)
-    target_subtype = normalize_subtype(args.subtype)
-    if not target_subtype:
+    subtype_pattern = normalize_subtype(args.subtype)
+    if not subtype_pattern:
         print(f"ERROR: --subtype '{args.subtype}' normalized to empty string", file=sys.stderr)
         sys.exit(1)
 
@@ -101,8 +104,13 @@ def main():
     msa_df["subtype_norm"] = msa_df["subtype"].apply(normalize_subtype)
     msa_df["parsed_date"] = msa_df["collection_date"].apply(parse_iso_date)
 
-    after_subtype = msa_df[msa_df["subtype_norm"] == target_subtype]
-    print(f"Samples matching subtype='{target_subtype}': {len(after_subtype)}")
+    matched_subtype_mask = msa_df["subtype_norm"].apply(
+        lambda v: bool(v) and fnmatch.fnmatchcase(v, subtype_pattern)
+    )
+    after_subtype = msa_df[matched_subtype_mask]
+    matched_subtype_values = sorted(after_subtype["subtype_norm"].unique())
+    print(f"Samples matching subtype pattern '{subtype_pattern}': {len(after_subtype)} "
+          f"(matched values: {matched_subtype_values})")
     after_host = after_subtype[after_subtype["host_group"] == args.host]
     print(f"Samples also matching host='{args.host}': {len(after_host)}")
     after_date = after_host.dropna(subset=["parsed_date"])
