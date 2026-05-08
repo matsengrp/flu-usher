@@ -109,7 +109,29 @@ geographic_groups_to_extract:
   - "europe"
   - "asia"
 
-# Temporal subtree extraction (per-tree median date split)
-temporal_groups_to_extract:
-  - "early"
-  - "late"
+# Cohort subtree extraction (subtype + host + min-date)
+# Each entry produces one filtered subtree per (segment, subtype) tree.
+# Trees with zero matching samples for a cohort are skipped automatically.
+# Fields:
+#   name:     wildcard slug used in output paths
+#   subtype:  GISAID subtype, bare form (e.g. "H1N1") or glob pattern (e.g. "H5N*"
+#             to match every H5Nx); normalized and matched internally
+#   host:     must match a host_group value (human | avian | swine | bovine | other)
+#   min_date: ISO date "YYYY-MM-DD"; samples with collection_date > min_date kept
+cohorts_to_extract:
+  - name: "H1N1_human_post2012"
+    subtype: "H1N1"
+    host: "human"
+    min_date: "2012-01-01"
+  - name: "H3N2_human_post2004"
+    subtype: "H3N2"
+    host: "human"
+    min_date: "2004-01-01"
+  - name: "H5_avian_all"
+    subtype: "H5N*"
+    host: "avian"
+    min_date: "1900-01-01"
+
+# Chronumental: extra CLI flags passed to `chronumental` for cohort tree dating.
+# --steps controls optimization iterations (matches flu-mut-fitness default).
+chronumental_kwargs: "--steps 5000"

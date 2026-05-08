@@ -41,7 +41,8 @@ flu-usher/
 │   ├── simplified_host_classifier.py               # Classify hosts into groups (used by augment_metadata.py)
 │   ├── augment_metadata.py                         # Add host, geographic, and temporal group columns to metadata
 │   ├── create_samples_file.py                      # Create samples file for subtree extraction (generic column filter)
-│   ├── create_temporal_samples_file.py             # Create samples file for temporal subtree extraction
+│   ├── create_cohort_samples_file.py               # Create samples file for cohort subtree extraction (subtype + host + min-date)
+│   ├── prepare_chronumental_dates.py               # Build global strain<TAB>date TSV consumed by chronumental
 │   └── prepare_host_annotation.py                  # Build 2-col CSV (isolate_id, host_group) for PastML
 └── notebooks/               # Jupyter notebooks for development and analysis
 ```
@@ -81,8 +82,9 @@ flu-usher/
    - Set number of randomizations for tree building (n_randomizations, default: 10)
    - Set desired number of threads
    - Specify geographic groups to extract (geographic_groups_to_extract)
-   - Specify temporal groups to extract (temporal_groups_to_extract)
+   - Specify cohort filters to extract — combinations of subtype, host, and minimum collection date (cohorts_to_extract)
    - Optionally specify rerooting nodes for final trees (reroot)
+   - Tune chronumental optimization (chronumental_kwargs, default `--steps 5000`)
 
 3. **Prepare your GISAID data**
 
@@ -132,10 +134,13 @@ flu-usher/
      - `{geo_group}_samples.txt`: Sample list for each geographic group
      - `{geo_group}_tree.pb.gz`: Extracted subtree for each geographic group
      - `{geo_group}_tree.jsonl.gz`: Taxonium visualization for each geographic group
-   - `temporal_trees/`: Temporal subtree visualizations (early/late split at per-tree median date)
-     - `{temporal_group}_samples.txt`: Sample list for each temporal group
-     - `{temporal_group}_tree.pb.gz`: Extracted subtree for each temporal group
-     - `{temporal_group}_tree.jsonl.gz`: Taxonium visualization for each temporal group
+   - `cohort_trees/`: Cohort subtree visualizations (per-cohort filter on subtype + host + min-date; cohorts with no matching samples in this tree are skipped automatically)
+     - `{cohort}_samples.txt`: Sample list for each cohort (root sequence + matching samples)
+     - `{cohort}_reference_sample.txt`: Earliest non-root cohort sample, used as the chronumental reference node
+     - `{cohort}_tree.pb.gz`: Extracted subtree for each cohort
+     - `{cohort}_tree.nwk`: Newick of the cohort subtree (input to chronumental)
+     - `{cohort}_tree.jsonl.gz`: Taxonium visualization for each cohort
+     - `{cohort}_dates.tsv`: Chronumental-inferred dates for every node (leaves + internal) of the cohort tree
    - `host_ancestral/`: Per-node host inference (PastML / DOWNPASS)
      - `combined_ancestral_states.tab`: Tab-separated file of inferred `host_group` for every node (leaves + internals); the `node` column joins to internal node IDs in `final_tree.pb.gz`. Ambiguous internals may appear on multiple rows (one per equally-parsimonious state).
      - `host_tree.html`: Interactive PastML visualization of the ancestral reconstruction.
@@ -226,23 +231,28 @@ flu-usher/
     - Adds temporal_group column (early, late, unknown based on global median date)
 
 17. **Extract subtrees** (matUtils extract):
-    - Creates separate subtrees for each geographic region and temporal period
+    - Creates separate subtrees for each geographic region and each configured cohort
     - Geographic subtrees filter by metadata column
-    - Temporal subtrees compute per-tree median collection date for balanced early/late splits
+    - Cohort subtrees filter on (subtype, host_group, collection_date > min_date) simultaneously; trees with no matching samples for a cohort are skipped
     - Each subtree includes the root sequence plus matching samples
 
-18. **Infer per-node host states** (PastML, `prepare_host_annotation.py`):
+18. **Date cohort subtrees** (chronumental):
+    - For each non-empty cohort, runs chronumental on the cohort newick to infer dates for every node (leaves + internal)
+    - Anchors on the earliest non-root cohort sample as the reference node so the optimization is not biased by the (much older) curated root
+    - Output is a TSV (`{cohort}_dates.tsv`) joined back to leaf metadata for downstream analysis
+
+19. **Infer per-node host states** (PastML, `prepare_host_annotation.py`):
     - Builds a 2-column annotation table from `combined_metadata_augmented.csv` mapping `isolate_id → host_group`
     - Runs PastML with the DOWNPASS parsimony method on `final_tree.nwk` to reconstruct `host_group` for every internal node
     - **Inputs:** `final_tree.nwk`, `combined_metadata_augmented.csv`
     - **Outputs:** `host_ancestral/combined_ancestral_states.tab` (per-node host_group; node IDs match `final_tree.pb.gz`), `host_ancestral/host_tree.html` (interactive viz), `host_ancestral/named.tree_final_tree.nwk`
     - Ambiguous internals appear on multiple rows of `combined_ancestral_states.tab` (one per equally-parsimonious state)
 
-19. **Create visualizations** (usher_to_taxonium):
+20. **Create visualizations** (usher_to_taxonium):
     - Converts final tree and all subtrees to Taxonium format
     - Incorporates metadata (including host, geographic, and temporal groups) for interactive exploration
 
-20. **Execute analysis notebooks** (jupyter nbconvert):
+21. **Execute analysis notebooks** (jupyter nbconvert):
     - Runs analysis notebooks after all pipeline outputs are complete
     - Generates HTML reports in `results/notebooks/`
     - Includes metadata analysis and alignment statistics

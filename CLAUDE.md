@@ -35,8 +35,8 @@ snakemake --cores 8 --use-conda results/PB2/all/final_tree.jsonl.gz
 # Run for geographic subtrees
 snakemake --cores 8 --use-conda results/HA/H5/geographic_trees/north_america_tree.jsonl.gz
 
-# Run for temporal subtrees
-snakemake --cores 8 --use-conda results/HA/H5/temporal_trees/early_tree.jsonl.gz
+# Run for cohort subtrees (subtype + host + min-date)
+snakemake --cores 8 --use-conda results/HA/H1/cohort_trees/H1N1_human_post2012_tree.jsonl.gz
 ```
 
 ### Workflow Control
@@ -80,10 +80,10 @@ results/
 │   │   │   ├── {geo_group}_samples.txt
 │   │   │   ├── {geo_group}_tree.pb.gz
 │   │   │   └── {geo_group}_tree.jsonl.gz
-│   │   └── temporal_trees/
-│   │       ├── {temporal_group}_samples.txt
-│   │       ├── {temporal_group}_tree.pb.gz
-│   │       └── {temporal_group}_tree.jsonl.gz
+│   │   └── cohort_trees/
+│   │       ├── {cohort}_samples.txt
+│   │       ├── {cohort}_tree.pb.gz
+│   │       └── {cohort}_tree.jsonl.gz
 │   ├── H3/
 │   ├── H5/
 │   ├── H7/
@@ -111,7 +111,7 @@ results/
    - Number of randomizations for tree building (n_randomizations)
    - Number of threads for parallel execution
    - Geographic groups to extract for geographic subtree analysis (geographic_groups_to_extract)
-   - Temporal groups to extract for temporal subtree analysis (temporal_groups_to_extract)
+   - Cohort filters to extract — combinations of subtype, host, and minimum collection date (cohorts_to_extract)
    - Optional rerooting specifications for final trees (reroot)
 
 3. **scripts/**: Python scripts for specific tasks:
@@ -126,7 +126,8 @@ results/
    - `simplified_host_classifier.py`: Host classification logic (used by augment_metadata.py)
    - `augment_metadata.py`: Adds host_group, geographic_group, and temporal_group columns to metadata
    - `create_samples_file.py`: Creates sample files for subtree extraction by any metadata column
-   - `create_temporal_samples_file.py`: Creates sample files for temporal subtree extraction (per-tree median date split)
+   - `create_cohort_samples_file.py`: Creates sample files for cohort subtree extraction (combined subtype + host + min-date filter); also writes the earliest non-root cohort sample to a sidecar file used as the chronumental reference node
+   - `prepare_chronumental_dates.py`: Builds the global `strain<TAB>date` TSV consumed by every chronumental job
 
 4. **notebooks/**: Jupyter notebooks for analysis and development
    - `analyze_alignments.ipynb`: Analyzes sequence statistics across segments/subtypes
@@ -151,7 +152,8 @@ results/
 15. **Reroot Tree** → Optionally reroots tree at specified node (matUtils extract)
 16. **Create Root Sequence** → Infers root sequence from tree or uses reference
 17. **Augment Metadata** → Adds host_group, geographic_group, and temporal_group columns
-18. **Extract Subtrees** → Creates subtrees for each geographic region and temporal period (matUtils extract)
+18. **Extract Subtrees** → Creates subtrees for each geographic region and each configured cohort (matUtils extract); cohorts with no matching samples in a given tree are skipped
+19. **Date Cohort Subtrees** → Runs chronumental on each cohort newick to infer dates for every node, anchored on the earliest non-root cohort sample as the reference
 19. **Create Visualizations** → Generates Taxonium format for full tree and all subtrees
 
 ### Input Data Requirements
@@ -170,6 +172,6 @@ The pipeline expects GISAID data in each input directory:
 - Reference sequences are specified in config.yaml and can be customized
 - The pipeline uses a DAG-based approach (via larch and historydag) to build consensus trees from multiple randomized alignments
 - Multiple randomizations help explore tree space and produce more robust phylogenies
-- Subtrees are automatically extracted for specified geographic regions (e.g., north_america, europe, asia) and temporal periods (early/late split at per-tree median collection date)
+- Subtrees are automatically extracted for specified geographic regions (e.g., north_america, europe, asia) and for configured cohorts (subtype + host + min-date filters); cohorts with no matching samples in a given tree are skipped
 - Trees can be optionally rerooted using the `reroot` configuration parameter
 - The final outputs are interactive Taxonium visualization files (.jsonl.gz)
