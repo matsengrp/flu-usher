@@ -779,6 +779,34 @@ rule extract_final_newick:
         matUtils extract -i {input.tree} -t {output.newick} &> {log}
         """
 
+# Prune terminals with very long branches before chronumental dating.
+# These are typically synthetic reverse-genetics reassortants (e.g. PR8
+# backbone constructs) or other lab-derived sequences whose terminal
+# branches reflect engineering / passage rather than natural evolution.
+# Their length, combined with often-missing collection_date metadata,
+# pushes chronumental's SVI to assign extreme dates to internal nodes
+# and overflows pandas' 292-year timedelta limit when writing outputs.
+rule filter_long_branches:
+    conda: "envs/python.yaml"
+    input:
+        tree="results/{segment}/{subtype}/final_tree.nwk"
+    output:
+        tree="results/{segment}/{subtype}/final_tree_chronumental_input.nwk",
+        dropped="results/{segment}/{subtype}/dropped_long_branches.tsv"
+    params:
+        max_branch_length=config.get("chronumental_max_branch_length", 30)
+    log:
+        "logs/{segment}/{subtype}/filter_long_branches.log"
+    shell:
+        """
+        python scripts/filter_long_branches.py \
+            --input {input.tree} \
+            --output {output.tree} \
+            --dropped {output.dropped} \
+            --max-branch-length {params.max_branch_length} \
+            &> {log}
+        """
+
 # Pick the earliest non-root sample with a parseable YYYY-MM-DD date as the
 # chronumental reference for the full per-subtype tree. Mirrors the per-cohort
 # reference logic in scripts/create_cohort_samples_file.py.
@@ -808,7 +836,7 @@ rule find_earliest_dated_sample:
 rule chronumental_subtype:
     conda: "envs/chronumental.yaml"
     input:
-        tree="results/{segment}/{subtype}/final_tree.nwk",
+        tree="results/{segment}/{subtype}/final_tree_chronumental_input.nwk",
         dates="results/chronumental_dates.tsv",
         reference="results/{segment}/{subtype}/earliest_dated_sample.txt"
     output:
