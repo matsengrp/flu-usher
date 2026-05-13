@@ -59,6 +59,9 @@ rule all:
         # Taxonium visualization trees for HA segments by subtype
         expand("results/HA/{subtype}/final_tree.jsonl.gz",
                subtype=config["ha_subtypes"]),
+        # Chronumental-dated full HA subtype trees
+        expand("results/HA/{subtype}/final_tree_dates.tsv",
+               subtype=config["ha_subtypes"]),
         # Unaligned coding sequences for HA segments by subtype (per-gene output directories)
         expand("results/HA/{subtype}/unaligned_coding_seqs/",
                subtype=config["ha_subtypes"]),
@@ -774,6 +777,59 @@ rule extract_final_newick:
     shell:
         """
         matUtils extract -i {input.tree} -t {output.newick} &> {log}
+        """
+
+# Pick the earliest non-root sample with a parseable YYYY-MM-DD date as the
+# chronumental reference for the full per-subtype tree. Mirrors the per-cohort
+# reference logic in scripts/create_cohort_samples_file.py.
+rule find_earliest_dated_sample:
+    conda: "envs/python.yaml"
+    input:
+        curated_msa="results/{segment}/{subtype}/curated_msa.fasta.xz",
+        metadata="results/combined_metadata_augmented.csv",
+        root="results/{segment}/{subtype}/curated_root.fasta"
+    output:
+        reference="results/{segment}/{subtype}/earliest_dated_sample.txt"
+    log:
+        "logs/{segment}/{subtype}/find_earliest_dated_sample.log"
+    shell:
+        """
+        python scripts/find_earliest_dated_sample.py \
+            --curated-msa {input.curated_msa} \
+            --metadata {input.metadata} \
+            --root {input.root} \
+            --output {output.reference} \
+            &> {log}
+        """
+
+# Run chronumental on the full per-subtype tree to estimate dates for every
+# node. Uses the earliest non-root dated sample as the reference so the model
+# anchors on a real observation rather than the (possibly poorly-dated) root.
+rule chronumental_subtype:
+    conda: "envs/chronumental.yaml"
+    input:
+        tree="results/{segment}/{subtype}/final_tree.nwk",
+        dates="results/chronumental_dates.tsv",
+        reference="results/{segment}/{subtype}/earliest_dated_sample.txt"
+    output:
+        dates="results/{segment}/{subtype}/final_tree_dates.tsv",
+        timetree="results/{segment}/{subtype}/chronumental_timetree_final_tree.nwk"
+    params:
+        chronumental_kwargs=config.get("chronumental_kwargs", "--steps 5000"),
+        reference_node=lambda w, input: open(input.reference).read().strip(),
+    log:
+        stdout="logs/{segment}/{subtype}/chronumental_subtype.stdout",
+        stderr="logs/{segment}/{subtype}/chronumental_subtype.stderr"
+    shell:
+        """
+        chronumental \
+            --tree {input.tree} \
+            {params.chronumental_kwargs} \
+            --reference_node {params.reference_node} \
+            --dates {input.dates} \
+            --dates_out {output.dates} \
+            --tree_out {output.timetree} \
+            > {log.stdout} 2> {log.stderr}
         """
 
 # Build a 2-column (isolate_id, host_group) CSV for PastML's --data argument.
