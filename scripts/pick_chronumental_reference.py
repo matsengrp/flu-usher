@@ -1,18 +1,33 @@
 """
-Pick the earliest non-root sample with a parseable YYYY-MM-DD collection_date
-that is present in the curated MSA, and write its isolate_id to a single-line
-file. Used as `chronumental --reference_node` for the per-segment tree so
-chronumental anchors on a real, well-dated observation rather than the curated
-root sequence (which may be much older or undated).
+Pick a reference sample for chronumental's --reference_node flag.
 
-Cluster-density filter: a candidate date is accepted only if at least
-`--min-cluster-size` dated samples (including those at the candidate date
-itself) fall within +/- `--cluster-window-years` of it. The gap-to-next-date
-filter that this replaces was too lenient for multi-subtype internal-segment
-trees, where GISAID "1905" metadata errors slipped through because legitimate
-1918 samples sat within 13 years. Requiring a minimum cluster size around the
-candidate forces the chosen anchor to be a "real" early sample, not a
-date-typo outlier.
+Strategy: pick a sample whose date sits at a configurable fraction of the
+way through the per-segment tree's date range (default 1/3), after
+restricting to dates that survive a cluster-density check.
+
+Empirically (PR #37 H5 reference-choice experiment) anchoring on a date
+in the first half of the valid range gives notably better leaf residuals
+than the earliest cluster-passing date — H5 median |residual| 4 d at
+1994 vs 13 d at 1968. Strict midpoint (1/2) works for most subtypes but
+overflows pandas' 292-year Timedelta limit on H1 because that tree's
+date range starts late (1976) and an anchor at 2001 pushes some deep
+internal node 346 years from origin. The 1/3-fraction default biases
+the anchor slightly earlier — early enough to keep all subtypes within
+pandas' window, late enough to retain the residual improvements seen
+with midpoint anchors.
+
+Algorithm:
+
+1. From the curated MSA, drop the curated root and any tips pruned by the
+   long-branch filter (passed via --dropped-tips).
+2. Keep only samples whose collection_date is a parseable YYYY-MM-DD.
+3. Find all distinct dates with at least --min-cluster-size dated samples
+   within +/- --cluster-window-years. Call these the "valid" dates.
+4. Target date = earliest_valid + (latest_valid - earliest_valid) *
+   --target-fraction.
+5. Choose the valid date closest to the target date.
+6. Among samples at the chosen date, tie-break by smallest isolate_id for
+   determinism across runs.
 """
 import argparse
 import lzma
@@ -33,7 +48,7 @@ def parse_iso_date(value):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Pick the earliest non-root dated sample present in the curated MSA"
+        description="Pick a chronumental reference sample near the date-range midpoint"
     )
     parser.add_argument("--curated-msa", required=True,
                         help="Path to curated_msa.fasta.xz (source of truth for samples in tree)")
@@ -48,17 +63,26 @@ def main():
                              "so the chosen reference is guaranteed to exist in the "
                              "newick chronumental will actually receive.")
     parser.add_argument("--output", required=True,
-                        help="Output file holding the isolate_id of the earliest dated sample")
+                        help="Output file holding the chosen reference isolate_id")
     parser.add_argument("--cluster-window-years", type=float, default=10.0,
                         help="Half-width (in years) of the window used to count nearby "
                              "samples when judging whether a candidate date is part of "
-                             "a real cluster. The chosen date must have at least "
+                             "a real cluster. A date is 'valid' if it has at least "
                              "--min-cluster-size dated samples within +/- this many years.")
     parser.add_argument("--min-cluster-size", type=int, default=3,
                         help="Minimum number of dated samples (including those at the "
                              "candidate date itself) required within the cluster window. "
                              "Candidate dates with fewer nearby samples are treated as "
-                             "isolated metadata-error outliers and skipped.")
+                             "isolated metadata-error outliers and excluded from the "
+                             "valid set.")
+    parser.add_argument("--target-fraction", type=float, default=1.0 / 3.0,
+                        help="Fraction along the valid date range at which to target "
+                             "the chosen reference: target = earliest + fraction * "
+                             "(latest - earliest). 0.0 = earliest, 0.5 = midpoint, "
+                             "1.0 = latest. Default 1/3 biases the anchor toward the "
+                             "earlier portion of the range to avoid pandas Timedelta "
+                             "overflow on deep internal-node date predictions while "
+                             "retaining the residual improvements of mid-range anchors.")
     args = parser.parse_args()
 
     print(f"Reading root sequence from {args.root}")
@@ -105,34 +129,41 @@ def main():
               file=sys.stderr)
         sys.exit(1)
 
-    # Walk distinct dates from oldest to newest; skip any whose cluster-window
-    # neighbor count is below --min-cluster-size.
+    # Find all dates with sufficient cluster density.
     sample_dates = candidates["parsed_date"].values
     unique_dates = sorted(candidates["parsed_date"].unique())
     window = timedelta(days=args.cluster_window_years * 365.25)
-    chosen_date = None
+    valid_dates = []
     for d in unique_dates:
         nearby = ((sample_dates >= d - window) & (sample_dates <= d + window)).sum()
         if nearby >= args.min_cluster_size:
-            chosen_date = d
-            break
-        else:
-            n_at_d = int((candidates["parsed_date"] == d).sum())
-            print(f"  skipping isolated date {pd.Timestamp(d).date()} "
-                  f"({n_at_d} sample(s) at this date; {nearby} sample(s) within "
-                  f"+/-{args.cluster_window_years:g}y, need >= {args.min_cluster_size})")
-    if chosen_date is None:
-        print(f"ERROR: no candidate date has at least {args.min_cluster_size} samples "
-              f"within +/-{args.cluster_window_years} years", file=sys.stderr)
+            valid_dates.append(d)
+    if not valid_dates:
+        print(f"ERROR: no date has at least {args.min_cluster_size} samples within "
+              f"+/-{args.cluster_window_years} years", file=sys.stderr)
         sys.exit(1)
 
-    earliest = candidates[candidates["parsed_date"] == chosen_date]
-    earliest = earliest.sort_values("isolate_id")
-    chosen = earliest.iloc[0]
+    earliest_valid = valid_dates[0]
+    latest_valid = valid_dates[-1]
+    span = latest_valid - earliest_valid
+    target = earliest_valid + span * args.target_fraction
+    print(f"Valid date range: {pd.Timestamp(earliest_valid).date()} to "
+          f"{pd.Timestamp(latest_valid).date()}; target "
+          f"({args.target_fraction:.3f} of range) = "
+          f"{pd.Timestamp(target).date()}")
+
+    # Pick the valid date closest to the target.
+    chosen_date = min(valid_dates, key=lambda d: abs((d - target).total_seconds()))
+    gap_to_target = abs((chosen_date - target).days)
+    print(f"Closest valid date to target: {pd.Timestamp(chosen_date).date()} "
+          f"({gap_to_target} days from target)")
+
+    at_chosen = candidates[candidates["parsed_date"] == chosen_date]
+    at_chosen = at_chosen.sort_values("isolate_id")
+    chosen = at_chosen.iloc[0]
     ref_id = chosen["isolate_id"]
-    ref_date = chosen["parsed_date"].date()
-    n_tied = len(earliest)
-    print(f"Chosen reference sample: {ref_id} ({ref_date})"
+    n_tied = len(at_chosen)
+    print(f"Chosen reference sample: {ref_id} ({pd.Timestamp(chosen_date).date()})"
           + (f"; broke {n_tied}-way tie by smallest isolate_id" if n_tied > 1 else ""))
 
     with open(args.output, "w") as f:

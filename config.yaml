@@ -124,3 +124,25 @@ chronumental_kwargs: "--steps 5000 --clock 2"
 # thresholds also reduce the risk of extreme internal-node date predictions
 # overflowing pandas' 292-year Timedelta limit on multi-subtype trees.
 chronumental_max_branch_length: 10
+
+# Per segment/subtype, where to place chronumental's --reference_node along
+# the valid date range:
+#   "early" = 1/3 of the way from earliest to latest valid date
+#   "mid"   = 1/2 of the way (midpoint)
+# Different trees converge under different anchor points because the model's
+# internal-node date predictions can hit either pandas' lower (~1655 AD) or
+# upper (~2282 AD) Timedelta limit depending on where the date axis is
+# centered. Values below come from the PR #37 empirical comparison: "mid"
+# gives slightly better residuals on most subtypes; H1 and N9 are the two
+# trees where "mid" either overflows (H1) or gives worse residuals (N9).
+chronumental_reference_strategy:
+  HA/H1: early
+  HA/H3: mid
+  HA/H5: mid
+  HA/H7: mid
+  HA/H9: mid
+  NA/N1: mid
+  NA/N2: mid
+  NA/N6: mid
+  NA/N8: mid
+  NA/N9: early

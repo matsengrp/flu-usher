@@ -3,6 +3,22 @@ import glob
 configfile: "config.yaml"
 
 
+_REFERENCE_FRACTIONS = {"early": 1.0 / 3.0, "mid": 0.5}
+
+
+def _chronumental_target_fraction(segment, subtype):
+    """Look up the chronumental reference-target fraction for a tree."""
+    strategy_map = config.get("chronumental_reference_strategy", {})
+    key = f"{segment}/{subtype}"
+    strategy = strategy_map.get(key, "mid")
+    if strategy not in _REFERENCE_FRACTIONS:
+        raise ValueError(
+            f"chronumental_reference_strategy[{key!r}] = {strategy!r} is not "
+            f"one of {sorted(_REFERENCE_FRACTIONS)}"
+        )
+    return _REFERENCE_FRACTIONS[strategy]
+
+
 # Define the final outputs that should be created for each segment-subtype combination
 rule all:
     input:
@@ -644,11 +660,15 @@ rule filter_long_branches:
         rm {output.dropped}.all {output.dropped}.names
         """
 
-# Pick the earliest non-root sample with a parseable YYYY-MM-DD date as the
-# chronumental reference for each per-segment tree. Skips isolated outlier
-# dates so spurious metadata (e.g. 21st-century isolates mislabeled "1905")
-# does not anchor the molecular clock at a nonsensical date.
-rule find_earliest_dated_sample:
+# Pick a sample near the chronological midpoint of the per-segment tree's
+# date range as the chronumental reference. The midpoint strategy gives
+# better leaf residuals than anchoring on the earliest dated sample (see
+# PR #37 H5 reference-choice experiment: median |residual| 4 d at 1994
+# vs 13 d at 1968). A cluster-density filter ensures the chosen date is
+# part of a real cluster (>= min-cluster-size samples within +/-
+# cluster-window-years), so spurious metadata-error early dates can't
+# slip through.
+rule pick_chronumental_reference:
     conda: "envs/python.yaml"
     input:
         curated_msa="results/{segment}/{subtype}/curated_msa.fasta.xz",
@@ -656,16 +676,19 @@ rule find_earliest_dated_sample:
         root="results/{segment}/{subtype}/curated_root.fasta",
         dropped="results/{segment}/{subtype}/dropped_long_branches.tsv"
     output:
-        reference="results/{segment}/{subtype}/earliest_dated_sample.txt"
+        reference="results/{segment}/{subtype}/chronumental_reference.txt"
+    params:
+        target_fraction=lambda w: _chronumental_target_fraction(w.segment, w.subtype),
     log:
-        "logs/{segment}/{subtype}/find_earliest_dated_sample.log"
+        "logs/{segment}/{subtype}/pick_chronumental_reference.log"
     shell:
         """
-        python scripts/find_earliest_dated_sample.py \
+        python scripts/pick_chronumental_reference.py \
             --curated-msa {input.curated_msa} \
             --metadata {input.metadata} \
             --root {input.root} \
             --dropped-tips {input.dropped} \
+            --target-fraction {params.target_fraction} \
             --output {output.reference} \
             &> {log}
         """
@@ -678,7 +701,7 @@ rule chronumental_subtype:
     input:
         tree="results/{segment}/{subtype}/final_tree_chronumental_input.nwk",
         dates="results/chronumental_dates.tsv",
-        reference="results/{segment}/{subtype}/earliest_dated_sample.txt"
+        reference="results/{segment}/{subtype}/chronumental_reference.txt"
     output:
         dates="results/{segment}/{subtype}/final_tree_dates.tsv",
         timetree="results/{segment}/{subtype}/chronumental_timetree_final_tree.nwk"

@@ -127,7 +127,7 @@ results/
    - `simplified_host_classifier.py`: Host classification logic (used by augment_metadata.py)
    - `augment_metadata.py`: Adds host_group, geographic_group, and temporal_group columns to metadata
    - `create_samples_file.py`: Creates sample files for subtree extraction by any metadata column
-   - `find_earliest_dated_sample.py`: Picks the earliest non-root dated sample as the chronumental reference for each per-segment tree, skipping isolated outlier dates
+   - `pick_chronumental_reference.py`: Picks a chronumental reference sample near the chronological midpoint of the per-segment tree's date range, after restricting to dates that pass a cluster-density check
    - `prepare_chronumental_dates.py`: Builds the global `strain<TAB>date` TSV consumed by every chronumental job
 
 4. **notebooks/**: Jupyter notebooks for analysis and development
