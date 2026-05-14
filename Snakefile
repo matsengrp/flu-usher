@@ -805,14 +805,19 @@ rule filter_long_branches:
         "logs/{segment}/{subtype}/filter_long_branches.log"
     shell:
         """
-        # matUtils prepends -d (default cwd) to -s / -t paths, so use a
-        # project-relative path here rather than $TMPDIR.
-        matUtils summary -i {input.tree} -s {output.dropped} &> {log}
+        # matUtils prepends -d (default cwd) to -s / -t paths, so use
+        # project-relative paths here rather than $TMPDIR.
+        # 1. Identify tips whose terminal branch length exceeds the threshold.
+        matUtils summary -i {input.tree} -s {output.dropped}.all &> {log}
         awk -F'\\t' -v N={params.max_branch_length} \
-            'NR==1 || $2+0 > N' {output.dropped} > {output.dropped}.tmp
-        mv {output.dropped}.tmp {output.dropped}
-        cutoff=$(({params.max_branch_length} + 1))
-        matUtils extract -i {input.tree} -a $cutoff -t {output.tree} &>> {log}
+            'NR==1 || $2+0 > N' {output.dropped}.all > {output.dropped}
+        awk -F'\\t' 'NR>1 {{print $1}}' {output.dropped} > {output.dropped}.names
+        # 2. Prune exactly those samples from the tree so the audit TSV and
+        # the filtered newick agree on what was dropped (matUtils' -a flag has
+        # inclusive boundary semantics that don't match strict "branch > N").
+        matUtils extract -i {input.tree} -s {output.dropped}.names -p \
+            -t {output.tree} &>> {log}
+        rm {output.dropped}.all {output.dropped}.names
         """
 
 # Pick the earliest non-root sample with a parseable YYYY-MM-DD date as the
