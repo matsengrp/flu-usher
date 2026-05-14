@@ -786,10 +786,16 @@ rule extract_final_newick:
 # Their length, combined with often-missing collection_date metadata,
 # pushes chronumental's SVI to assign extreme dates to internal nodes
 # and overflows pandas' 292-year timedelta limit when writing outputs.
+#
+# Uses matUtils end-to-end:
+#   - `summary -s` emits per-tip parsimony (= terminal branch length)
+#   - `extract -a N` writes a newick keeping only tips with parsimony < N
+# We pass N = max_branch_length + 1 so a threshold of 30 drops every tip
+# whose terminal branch length is strictly greater than 30.
 rule filter_long_branches:
-    conda: "envs/python.yaml"
+    conda: "envs/usher.yaml"
     input:
-        tree="results/{segment}/{subtype}/final_tree.nwk"
+        tree="results/{segment}/{subtype}/final_tree.pb.gz"
     output:
         tree="results/{segment}/{subtype}/final_tree_chronumental_input.nwk",
         dropped="results/{segment}/{subtype}/dropped_long_branches.tsv"
@@ -799,12 +805,14 @@ rule filter_long_branches:
         "logs/{segment}/{subtype}/filter_long_branches.log"
     shell:
         """
-        python scripts/filter_long_branches.py \
-            --input {input.tree} \
-            --output {output.tree} \
-            --dropped {output.dropped} \
-            --max-branch-length {params.max_branch_length} \
-            &> {log}
+        # matUtils prepends -d (default cwd) to -s / -t paths, so use a
+        # project-relative path here rather than $TMPDIR.
+        matUtils summary -i {input.tree} -s {output.dropped} &> {log}
+        awk -F'\\t' -v N={params.max_branch_length} \
+            'NR==1 || $2+0 > N' {output.dropped} > {output.dropped}.tmp
+        mv {output.dropped}.tmp {output.dropped}
+        cutoff=$(({params.max_branch_length} + 1))
+        matUtils extract -i {input.tree} -a $cutoff -t {output.tree} &>> {log}
         """
 
 # Pick the earliest non-root sample with a parseable YYYY-MM-DD date as the
