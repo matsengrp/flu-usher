@@ -35,8 +35,8 @@ snakemake --cores 8 --use-conda results/PB2/all/final_tree.jsonl.gz
 # Run for geographic subtrees
 snakemake --cores 8 --use-conda results/HA/H5/geographic_trees/north_america_tree.jsonl.gz
 
-# Run for cohort subtrees (subtype + host + min-date)
-snakemake --cores 8 --use-conda results/HA/H1/cohort_trees/H1N1_human_post2012_tree.jsonl.gz
+# Run chronumental dating on a single per-segment tree
+snakemake --cores 8 --use-conda results/HA/H5/final_tree_dates.tsv
 ```
 
 ### Workflow Control
@@ -80,10 +80,10 @@ results/
 │   │   │   ├── {geo_group}_samples.txt
 │   │   │   ├── {geo_group}_tree.pb.gz
 │   │   │   └── {geo_group}_tree.jsonl.gz
-│   │   └── cohort_trees/
-│   │       ├── {cohort}_samples.txt
-│   │       ├── {cohort}_tree.pb.gz
-│   │       └── {cohort}_tree.jsonl.gz
+│   │   ├── final_tree_chronumental_input.nwk   # newick with long-branch tips pruned
+│   │   ├── dropped_long_branches.tsv           # audit of pruned tips
+│   │   ├── final_tree_dates.tsv                # chronumental per-node dates
+│   │   └── chronumental_timetree_final_tree.nwk
 │   ├── H3/
 │   ├── H5/
 │   ├── H7/
@@ -111,7 +111,8 @@ results/
    - Number of randomizations for tree building (n_randomizations)
    - Number of threads for parallel execution
    - Geographic groups to extract for geographic subtree analysis (geographic_groups_to_extract)
-   - Cohort filters to extract — combinations of subtype, host, and minimum collection date (cohorts_to_extract)
+   - Chronumental long-branch filter threshold (chronumental_max_branch_length, default 30)
+   - Chronumental CLI flags (chronumental_kwargs)
    - Optional rerooting specifications for final trees (reroot)
 
 3. **scripts/**: Python scripts for specific tasks:
@@ -126,7 +127,7 @@ results/
    - `simplified_host_classifier.py`: Host classification logic (used by augment_metadata.py)
    - `augment_metadata.py`: Adds host_group, geographic_group, and temporal_group columns to metadata
    - `create_samples_file.py`: Creates sample files for subtree extraction by any metadata column
-   - `create_cohort_samples_file.py`: Creates sample files for cohort subtree extraction (combined subtype + host + min-date filter); also writes the earliest non-root cohort sample to a sidecar file used as the chronumental reference node
+   - `find_earliest_dated_sample.py`: Picks the earliest non-root dated sample as the chronumental reference for each per-segment tree, skipping isolated outlier dates
    - `prepare_chronumental_dates.py`: Builds the global `strain<TAB>date` TSV consumed by every chronumental job
 
 4. **notebooks/**: Jupyter notebooks for analysis and development
@@ -152,9 +153,10 @@ results/
 15. **Reroot Tree** → Optionally reroots tree at specified node (matUtils extract)
 16. **Create Root Sequence** → Infers root sequence from tree or uses reference
 17. **Augment Metadata** → Adds host_group, geographic_group, and temporal_group columns
-18. **Extract Subtrees** → Creates subtrees for each geographic region and each configured cohort (matUtils extract); cohorts with no matching samples in a given tree are skipped
-19. **Date Cohort Subtrees** → Runs chronumental on each cohort newick to infer dates for every node, anchored on the earliest non-root cohort sample as the reference
-19. **Create Visualizations** → Generates Taxonium format for full tree and all subtrees
+18. **Extract Subtrees** → Creates subtrees for each configured geographic region (matUtils extract)
+19. **Filter Long Branches** → Prunes terminals with branch length > `chronumental_max_branch_length` from final_tree.pb.gz to produce final_tree_chronumental_input.nwk
+20. **Date Per-Segment Trees** → Runs chronumental on each pruned per-segment newick to infer dates for every node, anchored on the earliest non-root dated sample as the reference
+21. **Create Visualizations** → Generates Taxonium format for full tree and geographic subtrees
 
 ### Input Data Requirements
 
@@ -172,6 +174,7 @@ The pipeline expects GISAID data in each input directory:
 - Reference sequences are specified in config.yaml and can be customized
 - The pipeline uses a DAG-based approach (via larch and historydag) to build consensus trees from multiple randomized alignments
 - Multiple randomizations help explore tree space and produce more robust phylogenies
-- Subtrees are automatically extracted for specified geographic regions (e.g., north_america, europe, asia) and for configured cohorts (subtype + host + min-date filters); cohorts with no matching samples in a given tree are skipped
+- Subtrees are automatically extracted for specified geographic regions (e.g., north_america, europe, asia)
+- Chronumental dates every per-segment tree (HA × subtype, NA × subtype, internal segments × "all") after a long-branch filter prunes synthetic / lab-derived terminals that would otherwise break the time-tree fitting
 - Trees can be optionally rerooted using the `reroot` configuration parameter
 - The final outputs are interactive Taxonium visualization files (.jsonl.gz)
