@@ -41,7 +41,7 @@ flu-usher/
 │   ├── simplified_host_classifier.py               # Classify hosts into groups (used by augment_metadata.py)
 │   ├── augment_metadata.py                         # Add host, geographic, and temporal group columns to metadata
 │   ├── create_samples_file.py                      # Create samples file for subtree extraction (generic column filter)
-│   ├── create_cohort_samples_file.py               # Create samples file for cohort subtree extraction (subtype + host + min-date)
+│   ├── pick_chronumental_reference.py              # Pick a per-segment chronumental reference sample (mid-date dense cluster)
 │   ├── prepare_chronumental_dates.py               # Build global strain<TAB>date TSV consumed by chronumental
 │   └── prepare_host_annotation.py                  # Build 2-col CSV (isolate_id, host_group) for PastML
 └── notebooks/               # Jupyter notebooks for development and analysis
@@ -82,9 +82,8 @@ flu-usher/
    - Set number of randomizations for tree building (n_randomizations, default: 10)
    - Set desired number of threads
    - Specify geographic groups to extract (geographic_groups_to_extract)
-   - Specify cohort filters to extract — combinations of subtype, host, and minimum collection date (cohorts_to_extract)
    - Optionally specify rerooting nodes for final trees (reroot)
-   - Tune chronumental optimization (chronumental_kwargs, default `--steps 5000`)
+   - Tune chronumental: optimization flags (`chronumental_kwargs`, default `--steps 5000 --clock 2`), the long-branch filter threshold (`chronumental_max_branch_length`, default 10 mutations), and the per-segment reference selection strategy (`chronumental_reference_strategy`: each HA / NA subtype set to either `early` or `mid`)
 
 3. **Prepare your GISAID data**
 
@@ -134,13 +133,12 @@ flu-usher/
      - `{geo_group}_samples.txt`: Sample list for each geographic group
      - `{geo_group}_tree.pb.gz`: Extracted subtree for each geographic group
      - `{geo_group}_tree.jsonl.gz`: Taxonium visualization for each geographic group
-   - `cohort_trees/`: Cohort subtree visualizations (per-cohort filter on subtype + host + min-date; cohorts with no matching samples in this tree are skipped automatically)
-     - `{cohort}_samples.txt`: Sample list for each cohort (root sequence + matching samples)
-     - `{cohort}_reference_sample.txt`: Earliest non-root cohort sample, used as the chronumental reference node
-     - `{cohort}_tree.pb.gz`: Extracted subtree for each cohort
-     - `{cohort}_tree.nwk`: Newick of the cohort subtree (input to chronumental)
-     - `{cohort}_tree.jsonl.gz`: Taxonium visualization for each cohort
-     - `{cohort}_dates.tsv`: Chronumental-inferred dates for every node (leaves + internal) of the cohort tree
+   - Chronumental per-segment dating (HA and NA only — see Pipeline Steps for why internal segments are excluded):
+     - `dropped_long_branches.tsv`: Tips pruned by the long-branch filter (terminal branch length above `chronumental_max_branch_length`), with their `matUtils summary` parsimony scores
+     - `final_tree_chronumental_input.nwk`: Filtered newick fed to chronumental (the unfiltered tree is in `final_tree.nwk`)
+     - `chronumental_reference.txt`: Single-line file holding the isolate ID used as chronumental's `--reference_node`, chosen by `pick_chronumental_reference.py` according to the per-subtype `chronumental_reference_strategy`
+     - `final_tree_dates.tsv`: Chronumental-inferred dates for every leaf and internal node of the filtered tree
+     - `chronumental_timetree_final_tree.nwk`: Newick of the chronumental time tree (branch lengths in days)
    - `host_ancestral/`: Per-node host inference (PastML / DOWNPASS)
      - `combined_ancestral_states.tab`: Tab-separated file of inferred `host_group` for every node (leaves + internals); the `node` column joins to internal node IDs in `final_tree.pb.gz`. Ambiguous internals may appear on multiple rows (one per equally-parsimonious state).
      - `host_tree.html`: Interactive PastML visualization of the ancestral reconstruction.
@@ -230,16 +228,15 @@ flu-usher/
     - Adds geographic_group column (north_america, europe, asia, other)
     - Adds temporal_group column (early, late, unknown based on global median date)
 
-17. **Extract subtrees** (matUtils extract):
-    - Creates separate subtrees for each geographic region and each configured cohort
-    - Geographic subtrees filter by metadata column
-    - Cohort subtrees filter on (subtype, host_group, collection_date > min_date) simultaneously; trees with no matching samples for a cohort are skipped
+17. **Extract geographic subtrees** (matUtils extract):
+    - Creates separate subtrees for each configured geographic region (filter on the augmented `geographic_group` column)
     - Each subtree includes the root sequence plus matching samples
 
-18. **Date cohort subtrees** (chronumental):
-    - For each non-empty cohort, runs chronumental on the cohort newick to infer dates for every node (leaves + internal)
-    - Anchors on the earliest non-root cohort sample as the reference node so the optimization is not biased by the (much older) curated root
-    - Output is a TSV (`{cohort}_dates.tsv`) joined back to leaf metadata for downstream analysis
+18. **Date per-segment trees** (chronumental, HA and NA only):
+    - For each HA × subtype and NA × subtype tree, prunes terminals whose branch length exceeds `chronumental_max_branch_length` (default 10 mutations) with `matUtils summary` + `matUtils extract`. The dropped tips are typically synthetic reverse-genetics reassortants or other lab-derived sequences whose engineered mutations would skew the molecular clock.
+    - Picks a reference sample with `pick_chronumental_reference.py`: among dated tips that pass a cluster-density check (≥3 samples within ±10 years), choose the one whose date is closest to `(earliest + fraction × span)`, where `fraction` is `1/3` ("early") or `1/2` ("mid") per the per-subtype `chronumental_reference_strategy` config.
+    - Runs chronumental on the filtered newick with that reference and the global `chronumental_dates.tsv` (built from `combined_metadata_augmented.csv` by `prepare_chronumental_dates.py`).
+    - Internal segments (PB2, PB1, PA, NP, MP, NS — combined across subtypes) are intentionally not dated: their deep ancestral divergence gives chronumental a weak branch-length / date correlation, and the model's internal-node date predictions overflow pandas' ~292-year `Timedelta` limit.
 
 19. **Infer per-node host states** (PastML, `prepare_host_annotation.py`):
     - Builds a 2-column annotation table from `combined_metadata_augmented.csv` mapping `isolate_id → host_group`
