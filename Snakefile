@@ -651,7 +651,8 @@ rule find_earliest_dated_sample:
     input:
         curated_msa="results/{segment}/{subtype}/curated_msa.fasta.xz",
         metadata="results/combined_metadata_augmented.csv",
-        root="results/{segment}/{subtype}/curated_root.fasta"
+        root="results/{segment}/{subtype}/curated_root.fasta",
+        dropped="results/{segment}/{subtype}/dropped_long_branches.tsv"
     output:
         reference="results/{segment}/{subtype}/earliest_dated_sample.txt"
     log:
@@ -662,6 +663,7 @@ rule find_earliest_dated_sample:
             --curated-msa {input.curated_msa} \
             --metadata {input.metadata} \
             --root {input.root} \
+            --dropped-tips {input.dropped} \
             --output {output.reference} \
             &> {log}
         """
