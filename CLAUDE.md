@@ -175,6 +175,6 @@ The pipeline expects GISAID data in each input directory:
 - The pipeline uses a DAG-based approach (via larch and historydag) to build consensus trees from multiple randomized alignments
 - Multiple randomizations help explore tree space and produce more robust phylogenies
 - Subtrees are automatically extracted for specified geographic regions (e.g., north_america, europe, asia)
-- Chronumental dates every per-segment tree (HA × subtype, NA × subtype, internal segments × "all") after a long-branch filter prunes synthetic / lab-derived terminals that would otherwise break the time-tree fitting
+- Chronumental dates every HA × subtype and NA × subtype tree after a long-branch filter prunes synthetic / lab-derived terminals. Internal segments (PB2/PB1/PA/NP/MP/NS) are intentionally excluded: their combined-subtype trees have deep ancestral divergence that gives chronumental's model a weak branch-length / date correlation, and the resulting internal-node date predictions overflow pandas' 292-year Timedelta limit when chronumental writes its output
 - Trees can be optionally rerooted using the `reroot` configuration parameter
 - The final outputs are interactive Taxonium visualization files (.jsonl.gz)

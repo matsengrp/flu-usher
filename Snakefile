@@ -35,9 +35,11 @@ rule all:
         # Taxonium visualization trees for other segments (all subtypes combined)
         expand("results/{segment}/all/final_tree.jsonl.gz",
                segment=[s for s in config["segments"] if s not in ["HA", "NA"]]),
-        # Chronumental-dated full per-segment trees (internal segments)
-        expand("results/{segment}/all/final_tree_dates.tsv",
-               segment=[s for s in config["segments"] if s not in ["HA", "NA"]]),
+        # Chronumental dating is intentionally scoped to HA / NA per-subtype
+        # trees only. The combined-subtype internal-segment trees blow past
+        # pandas' 292-year Timedelta limit on internal-node date predictions
+        # because deep ancestral divergence weakens the branch-length / date
+        # correlation chronumental's model relies on.
         # Unaligned coding sequences for other segments (all subtypes combined, per-gene output directories)
         expand("results/{segment}/all/unaligned_coding_seqs/",
                segment=[s for s in config["segments"] if s not in ["HA", "NA"]]),
