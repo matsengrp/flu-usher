@@ -109,29 +109,40 @@ geographic_groups_to_extract:
   - "europe"
   - "asia"
 
-# Cohort subtree extraction (subtype + host + min-date)
-# Each entry produces one filtered subtree per (segment, subtype) tree.
-# Trees with zero matching samples for a cohort are skipped automatically.
-# Fields:
-#   name:     wildcard slug used in output paths
-#   subtype:  GISAID subtype, bare form (e.g. "H1N1") or glob pattern (e.g. "H5N*"
-#             to match every H5Nx); normalized and matched internally
-#   host:     must match a host_group value (human | avian | swine | bovine | other)
-#   min_date: ISO date "YYYY-MM-DD"; samples with collection_date > min_date kept
-cohorts_to_extract:
-  - name: "H1N1_human_post2012"
-    subtype: "H1N1"
-    host: "human"
-    min_date: "2012-01-01"
-  - name: "H3N2_human_post2004"
-    subtype: "H3N2"
-    host: "human"
-    min_date: "2004-01-01"
-  - name: "H5_avian_all"
-    subtype: "H5N*"
-    host: "avian"
-    min_date: "1900-01-01"
-
-# Chronumental: extra CLI flags passed to `chronumental` for cohort tree dating.
+# Chronumental: extra CLI flags passed to `chronumental` for per-segment tree dating.
 # --steps controls optimization iterations (matches flu-mut-fitness default).
-chronumental_kwargs: "--steps 5000"
+# --clock supplies an initial molecular-clock rate (mutations per genome per
+# year) so chronumental skips the root-to-tip regression that fails on some
+# trees whose date / root-distance correlation is broken (e.g. NA/N6).
+# The value is only a starting point; SVI still learns the rate from data.
+chronumental_kwargs: "--steps 5000 --clock 2"
+
+# filter_long_branches: drop terminals with branch length above this threshold
+# (in mutations) from final_tree.pb.gz before chronumental sees it. Removes
+# synthetic reverse-genetics reassortants and other lab-derived sequences
+# whose extreme branches break chronumental's time-tree fitting. Tighter
+# thresholds also reduce the risk of extreme internal-node date predictions
+# overflowing pandas' 292-year Timedelta limit on multi-subtype trees.
+chronumental_max_branch_length: 10
+
+# Per segment/subtype, where to place chronumental's --reference_node along
+# the valid date range:
+#   "early" = 1/3 of the way from earliest to latest valid date
+#   "mid"   = 1/2 of the way (midpoint)
+# Different trees converge under different anchor points because the model's
+# internal-node date predictions can hit either pandas' lower (~1655 AD) or
+# upper (~2282 AD) Timedelta limit depending on where the date axis is
+# centered. Values below come from the PR #37 empirical comparison: "mid"
+# gives slightly better residuals on most subtypes; H1 and N9 are the two
+# trees where "mid" either overflows (H1) or gives worse residuals (N9).
+chronumental_reference_strategy:
+  HA/H1: early
+  HA/H3: mid
+  HA/H5: mid
+  HA/H7: mid
+  HA/H9: mid
+  NA/N1: mid
+  NA/N2: mid
+  NA/N6: mid
+  NA/N8: mid
+  NA/N9: early
