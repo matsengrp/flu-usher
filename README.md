@@ -150,6 +150,7 @@ flu-usher/
    **Global outputs**:
    - `results/combined_metadata.csv`: Aggregated metadata from all input files
    - `results/combined_metadata_augmented.csv`: Metadata with host_group, geographic_group, and temporal_group columns added
+   - `results/input_data_md5sums.txt`: Provenance manifest with md5 hashes for every input FASTA / XLS file under the configured `input_dirs`, one file per line in standard `md5sum` format (`<hash>  <path>`)
    - `results/notebooks/`: Executed analysis notebooks
      - `analyze_metadata.html`: Metadata analysis report
      - `analyze_alignments.html`: Alignment statistics report
@@ -253,6 +254,10 @@ flu-usher/
     - Runs analysis notebooks after all pipeline outputs are complete
     - Generates HTML reports in `results/notebooks/`
     - Includes metadata analysis and alignment statistics
+
+22. **Record input data md5 sums** (md5sum):
+    - Walks every `.fasta` and `.xls` file under the configured `input_dirs` and writes their md5 hashes to `results/input_data_md5sums.txt` as a provenance manifest
+    - Files are listed as explicit Snakemake inputs, so the manifest is regenerated whenever any input data file changes
 
 ## Requirements
 

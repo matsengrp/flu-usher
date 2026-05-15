@@ -6,6 +6,16 @@ configfile: "config.yaml"
 _REFERENCE_FRACTIONS = {"early": 1.0 / 3.0, "mid": 0.5}
 
 
+# Discover every GISAID FASTA + XLS file across the configured input dirs at
+# parse time so the md5 manifest rule can list them as explicit inputs and be
+# reinvalidated whenever any of them change.
+INPUT_DATA_FILES = sorted(
+    f
+    for d in config["input_dirs"]
+    for f in glob.glob(f"{d}/*.fasta") + glob.glob(f"{d}/*.xls")
+)
+
+
 def _chronumental_target_fraction(segment, subtype):
     """Look up the chronumental reference-target fraction for a tree."""
     strategy_map = config.get("chronumental_reference_strategy", {})
@@ -85,7 +95,9 @@ rule all:
         "results/notebooks/analyze_metadata.done",
         "results/notebooks/analyze_alignments.done",
         "results/notebooks/analyze_dags.done",
-        "results/notebooks/analyze_chronumental.done"
+        "results/notebooks/analyze_chronumental.done",
+        # md5 manifest of all input GISAID data files
+        "results/input_data_md5sums.txt"
 
 # Parse GISAID data files from all input directories at once
 rule parse_gisaid_data:
@@ -799,4 +811,19 @@ rule execute_notebooks:
             {input.notebook} \
             &> {log}
         touch {output}
+        """
+
+# Record md5 sums of every input GISAID FASTA / XLS file as a provenance
+# manifest. Output lines follow the standard `md5sum` format:
+# "<hash>  <path>", one file per line.
+rule input_data_md5sums:
+    input:
+        INPUT_DATA_FILES
+    output:
+        "results/input_data_md5sums.txt"
+    log:
+        "logs/input_data_md5sums.log"
+    shell:
+        """
+        md5sum {input} > {output} 2> {log}
         """
