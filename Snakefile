@@ -84,7 +84,8 @@ rule all:
         # Executed analysis notebooks
         "results/notebooks/analyze_metadata.done",
         "results/notebooks/analyze_alignments.done",
-        "results/notebooks/analyze_dags.done"
+        "results/notebooks/analyze_dags.done",
+        "results/notebooks/analyze_chronumental.done"
 
 # Parse GISAID data files from all input directories at once
 rule parse_gisaid_data:
@@ -779,7 +780,11 @@ rule execute_notebooks:
         na_trees=expand("results/NA/{subtype}/final_tree.jsonl.gz",
                        subtype=config["na_subtypes"]),
         other_trees=expand("results/{segment}/all/final_tree.jsonl.gz",
-                          segment=[s for s in config["segments"] if s not in ["HA", "NA"]])
+                          segment=[s for s in config["segments"] if s not in ["HA", "NA"]]),
+        ha_dates=expand("results/HA/{subtype}/final_tree_dates.tsv",
+                        subtype=config["ha_subtypes"]),
+        na_dates=expand("results/NA/{subtype}/final_tree_dates.tsv",
+                        subtype=config["na_subtypes"])
     output:
         "results/notebooks/{notebook}.done"
     log:
