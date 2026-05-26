@@ -165,7 +165,7 @@ results/
 19. **Filter Long Branches** → Prunes terminals with branch length > `chronumental_max_branch_length` from final_tree.pb.gz to produce final_tree_chronumental_input.nwk
 20. **Date Per-Segment Trees** → Runs chronumental on each pruned per-segment newick to infer dates for every node, anchored on the earliest non-root dated sample as the reference
 21. **Infer Per-Node Host States** → Runs PastML / DOWNPASS on each `final_tree.nwk` to reconstruct `host_group` at every node; outputs `{segment}/{subtype}/host_ancestral/combined_ancestral_states.tab`
-22. **Infer Per-Node Subtype States** → Runs PastML / DOWNPASS on each `final_tree.nwk` to reconstruct `subtype` (`H*N*`, normalized from the raw GISAID `subtype` inside `prepare_subtype_annotation.py`) at every node; outputs `{segment}/{subtype}/subtype_ancestral/combined_ancestral_states.tab`. Most informative on internal-segment trees where tips of different subtypes coexist.
+22. **Infer Per-Node Subtype States** → Runs PastML / DOWNPASS on each `final_tree.nwk` to reconstruct `subtype` (`H*N*`, normalized from the raw GISAID `subtype` inside `prepare_subtype_annotation.py`) at every node; outputs `{segment}/{subtype}/subtype_ancestral/combined_ancestral_states.tab`. On HA per-subtype trees the H is fixed and only the inferred N partner varies (analogously for NA trees); on internal-segment trees neither letter is constrained, so the full `H*N*` can vary along the tree.
 23. **Create Visualizations** → Generates Taxonium format for full tree and geographic subtrees
 
 ### Input Data Requirements

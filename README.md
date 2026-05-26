@@ -145,7 +145,7 @@ flu-usher/
      - `host_tree.html`: Interactive PastML visualization of the ancestral reconstruction.
      - `named.tree_final_tree.nwk`: PastML's labeled-tree output (identical names to `final_tree.nwk` here).
    - `subtype_ancestral/`: Per-node subtype inference (PastML / DOWNPASS)
-     - `combined_ancestral_states.tab`: Tab-separated file of inferred `subtype` (`H*N*` form, normalized from the raw GISAID `subtype` column) for every node (leaves + internals); same join + ambiguity semantics as `host_ancestral/`. Most informative on internal-segment trees where tips of different subtypes coexist.
+     - `combined_ancestral_states.tab`: Tab-separated file of inferred `subtype` (`H*N*` form, normalized from the raw GISAID `subtype` column) for every node (leaves + internals); same join + ambiguity semantics as `host_ancestral/`. On HA per-subtype trees the H letter is fixed across all tips and only the inferred N partner varies (analogously for NA trees); on internal-segment trees neither letter is constrained, so the full `H*N*` can vary along the tree.
      - `subtype_tree.html`: Interactive PastML visualization of the ancestral reconstruction.
    
    **For the other segments** (e.g., `results/PB2/all/` or `results/NP/all/`):
@@ -257,7 +257,7 @@ flu-usher/
     - Runs PastML with DOWNPASS on `final_tree.nwk` to reconstruct `subtype` for every internal node
     - **Inputs:** `final_tree.nwk`, `combined_metadata_augmented.csv`
     - **Outputs:** `subtype_ancestral/combined_ancestral_states.tab`, `subtype_ancestral/subtype_tree.html`
-    - Most informative on internal-segment trees (`PB2/all`, `PB1/all`, `PA/all`, `NP/all`, `MP/all`, `NS/all`), where tips of different subtypes coexist and ancestral subtype tracks reassortment events; on HA / NA per-subtype trees it reveals the ancestral N (resp. H) partner
+    - On HA per-subtype trees the H letter is fixed across all tips and only the inferred N partner varies (analogously for NA trees); on internal-segment trees (`PB2/all`, `PB1/all`, `PA/all`, `NP/all`, `MP/all`, `NS/all`) neither letter is constrained, so the full `H*N*` can vary along the tree and ancestral subtype tracks reassortment events
 
 21. **Create visualizations** (usher_to_taxonium):
     - Converts final tree and all subtrees to Taxonium format
