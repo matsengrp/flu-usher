@@ -91,6 +91,15 @@ rule all:
         # Per-node host inference for other segments (all subtypes combined)
         expand("results/{segment}/all/host_ancestral/combined_ancestral_states.tab",
                segment=[s for s in config["segments"] if s not in ["HA", "NA"]]),
+        # Per-node subtype inference for HA segments by subtype
+        expand("results/HA/{subtype}/subtype_ancestral/combined_ancestral_states.tab",
+               subtype=config["ha_subtypes"]),
+        # Per-node subtype inference for NA segments by subtype
+        expand("results/NA/{subtype}/subtype_ancestral/combined_ancestral_states.tab",
+               subtype=config["na_subtypes"]),
+        # Per-node subtype inference for other segments (all subtypes combined)
+        expand("results/{segment}/all/subtype_ancestral/combined_ancestral_states.tab",
+               segment=[s for s in config["segments"] if s not in ["HA", "NA"]]),
         # Executed analysis notebooks
         "results/notebooks/analyze_metadata.done",
         "results/notebooks/analyze_alignments.done",
@@ -774,6 +783,50 @@ rule infer_node_hosts:
             --data_sep , \
             --id_index 0 \
             --columns host_group \
+            --prediction_method DOWNPASS \
+            --work_dir {params.work_dir} \
+            --html_compressed {output.html} \
+            &> {log}
+        """
+
+# Build a 2-column (isolate_id, subtype) CSV for PastML's --data argument
+# (the raw "A / H5N1" is normalized to "H5N1" inside prepare_subtype_annotation.py).
+# Single global file shared across all (segment, subtype) PastML runs.
+rule prepare_subtype_annotation:
+    conda: "envs/python.yaml"
+    input:
+        metadata="results/combined_metadata_augmented.csv"
+    output:
+        "results/subtype_annotation.csv"
+    log:
+        "logs/prepare_subtype_annotation.log"
+    shell:
+        """
+        python scripts/prepare_subtype_annotation.py {input.metadata} {output} &> {log}
+        """
+
+# Infer subtype (H*N*) at every internal node via PastML / DOWNPASS parsimony.
+# Same pattern as infer_node_hosts: PastML's 'node' column joins to final_tree.pb.gz.
+rule infer_node_subtypes:
+    conda: "envs/pastml.yaml"
+    input:
+        tree="results/{segment}/{subtype}/final_tree.nwk",
+        annotation="results/subtype_annotation.csv"
+    output:
+        states="results/{segment}/{subtype}/subtype_ancestral/combined_ancestral_states.tab",
+        html="results/{segment}/{subtype}/subtype_ancestral/subtype_tree.html"
+    params:
+        work_dir="results/{segment}/{subtype}/subtype_ancestral"
+    log:
+        "logs/{segment}/{subtype}/infer_node_subtypes.log"
+    shell:
+        """
+        pastml \
+            --tree {input.tree} \
+            --data {input.annotation} \
+            --data_sep , \
+            --id_index 0 \
+            --columns subtype \
             --prediction_method DOWNPASS \
             --work_dir {params.work_dir} \
             --html_compressed {output.html} \
