@@ -789,7 +789,8 @@ rule infer_node_hosts:
             &> {log}
         """
 
-# Build a 2-column (isolate_id, subtype_group) CSV for PastML's --data argument.
+# Build a 2-column (isolate_id, subtype) CSV for PastML's --data argument
+# (the raw "A / H5N1" is normalized to "H5N1" inside prepare_subtype_annotation.py).
 # Single global file shared across all (segment, subtype) PastML runs.
 rule prepare_subtype_annotation:
     conda: "envs/python.yaml"
@@ -804,7 +805,7 @@ rule prepare_subtype_annotation:
         python scripts/prepare_subtype_annotation.py {input.metadata} {output} &> {log}
         """
 
-# Infer subtype_group (H*N*) at every internal node via PastML / DOWNPASS parsimony.
+# Infer subtype (H*N*) at every internal node via PastML / DOWNPASS parsimony.
 # Same pattern as infer_node_hosts: PastML's 'node' column joins to final_tree.pb.gz.
 rule infer_node_subtypes:
     conda: "envs/pastml.yaml"
@@ -825,7 +826,7 @@ rule infer_node_subtypes:
             --data {input.annotation} \
             --data_sep , \
             --id_index 0 \
-            --columns subtype_group \
+            --columns subtype \
             --prediction_method DOWNPASS \
             --work_dir {params.work_dir} \
             --html_compressed {output.html} \

@@ -44,7 +44,7 @@ flu-usher/
 │   ├── pick_chronumental_reference.py              # Pick a per-segment chronumental reference sample (mid-date dense cluster)
 │   ├── prepare_chronumental_dates.py               # Build global strain<TAB>date TSV consumed by chronumental
 │   ├── prepare_host_annotation.py                  # Build 2-col CSV (isolate_id, host_group) for PastML
-│   └── prepare_subtype_annotation.py               # Build 2-col CSV (isolate_id, subtype_group) for PastML
+│   └── prepare_subtype_annotation.py               # Build 2-col CSV (isolate_id, subtype) for PastML, normalizing "A / H5N1" → "H5N1"
 └── notebooks/               # Jupyter notebooks for development and analysis
 ```
 
@@ -145,7 +145,7 @@ flu-usher/
      - `host_tree.html`: Interactive PastML visualization of the ancestral reconstruction.
      - `named.tree_final_tree.nwk`: PastML's labeled-tree output (identical names to `final_tree.nwk` here).
    - `subtype_ancestral/`: Per-node subtype inference (PastML / DOWNPASS)
-     - `combined_ancestral_states.tab`: Tab-separated file of inferred `subtype_group` (`H*N*` form) for every node (leaves + internals); same join + ambiguity semantics as `host_ancestral/`. Most informative on internal-segment trees where tips of different subtypes coexist.
+     - `combined_ancestral_states.tab`: Tab-separated file of inferred `subtype` (`H*N*` form, normalized from the raw GISAID `subtype` column) for every node (leaves + internals); same join + ambiguity semantics as `host_ancestral/`. Most informative on internal-segment trees where tips of different subtypes coexist.
      - `subtype_tree.html`: Interactive PastML visualization of the ancestral reconstruction.
    
    **For the other segments** (e.g., `results/PB2/all/` or `results/NP/all/`):
@@ -153,9 +153,9 @@ flu-usher/
 
    **Global outputs**:
    - `results/combined_metadata.csv`: Aggregated metadata from all input files
-   - `results/combined_metadata_augmented.csv`: Metadata with host_group, geographic_group, temporal_group, and subtype_group columns added
+   - `results/combined_metadata_augmented.csv`: Metadata with host_group, geographic_group, and temporal_group columns added
    - `results/host_annotation.csv`: 2-column (isolate_id, host_group) annotation table for PastML
-   - `results/subtype_annotation.csv`: 2-column (isolate_id, subtype_group) annotation table for PastML
+   - `results/subtype_annotation.csv`: 2-column (isolate_id, subtype) annotation table for PastML (subtype normalized to `H*N*` from the raw `subtype` column)
    - `results/input_data_md5sums.txt`: Provenance manifest with md5 hashes for every input FASTA / XLS file under the configured `input_dirs`, one file per line in standard `md5sum` format (`<hash>  <path>`)
    - `results/notebooks/`: Executed analysis notebooks
      - `analyze_metadata.html`: Metadata analysis report
@@ -234,7 +234,6 @@ flu-usher/
     - Adds host_group column (human, avian, swine, bovine, other)
     - Adds geographic_group column (north_america, europe, asia, other)
     - Adds temporal_group column (early, late, unknown based on global median date)
-    - Adds subtype_group column (`H*N*` form, normalized from the raw `subtype` column; `unknown` for non-matches)
 
 17. **Extract geographic subtrees** (matUtils extract):
     - Creates separate subtrees for each configured geographic region (filter on the augmented `geographic_group` column)
@@ -254,8 +253,8 @@ flu-usher/
     - Ambiguous internals appear on multiple rows of `combined_ancestral_states.tab` (one per equally-parsimonious state)
 
 20. **Infer per-node subtype states** (PastML, `prepare_subtype_annotation.py`):
-    - Builds a 2-column annotation table from `combined_metadata_augmented.csv` mapping `isolate_id → subtype_group` (`H*N*`)
-    - Runs PastML with DOWNPASS on `final_tree.nwk` to reconstruct `subtype_group` for every internal node
+    - Builds a 2-column annotation table from `combined_metadata_augmented.csv` mapping `isolate_id → subtype`, normalizing the raw GISAID `subtype` ("A / H5N1") to `H*N*` form ("H5N1") inside the prep script (`unknown` for non-matches)
+    - Runs PastML with DOWNPASS on `final_tree.nwk` to reconstruct `subtype` for every internal node
     - **Inputs:** `final_tree.nwk`, `combined_metadata_augmented.csv`
     - **Outputs:** `subtype_ancestral/combined_ancestral_states.tab`, `subtype_ancestral/subtype_tree.html`
     - Most informative on internal-segment trees (`PB2/all`, `PB1/all`, `PA/all`, `NP/all`, `MP/all`, `NS/all`), where tips of different subtypes coexist and ancestral subtype tracks reassortment events; on HA / NA per-subtype trees it reveals the ancestral N (resp. H) partner

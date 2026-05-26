@@ -5,28 +5,11 @@ Reads the combined metadata CSV once, adds all grouping columns, and writes a si
 """
 
 import argparse
-import re
 from datetime import datetime
 
 import pandas as pd
 
 from simplified_host_classifier import get_simplified_host_group
-
-
-_SUBTYPE_RE = re.compile(r"(H\d+N\d+)")
-
-
-def get_normalized_subtype(subtype_str):
-    """Normalize a raw GISAID subtype string (e.g. 'A / H5N1') to 'H5N1'.
-
-    Returns 'unknown' for missing/non-matching values.
-    """
-    if pd.isna(subtype_str) or not isinstance(subtype_str, str):
-        return "unknown"
-    match = _SUBTYPE_RE.search(subtype_str.replace(" ", ""))
-    if match:
-        return match.group(1)
-    return "unknown"
 
 
 def get_geographic_group(location):
@@ -113,11 +96,6 @@ def main():
     )
     print(f"\nTemporal group distribution:")
     print(df["temporal_group"].value_counts().to_string())
-
-    # Subtype group (normalized H*N* form of the raw `subtype` column)
-    df["subtype_group"] = df["subtype"].apply(get_normalized_subtype)
-    print(f"\nSubtype group distribution:")
-    print(df["subtype_group"].value_counts().to_string())
 
     df.to_csv(args.output, index=False)
     print(f"\nWrote augmented metadata to {args.output}")
