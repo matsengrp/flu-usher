@@ -83,7 +83,13 @@ results/
 │   │   ├── final_tree_chronumental_input.nwk   # newick with long-branch tips pruned
 │   │   ├── dropped_long_branches.tsv           # audit of pruned tips
 │   │   ├── final_tree_dates.tsv                # chronumental per-node dates
-│   │   └── chronumental_timetree_final_tree.nwk
+│   │   ├── chronumental_timetree_final_tree.nwk
+│   │   ├── host_ancestral/                     # PastML per-node host_group
+│   │   │   ├── combined_ancestral_states.tab
+│   │   │   └── host_tree.html
+│   │   └── subtype_ancestral/                  # PastML per-node subtype_group (H*N*)
+│   │       ├── combined_ancestral_states.tab
+│   │       └── subtype_tree.html
 │   ├── H3/
 │   ├── H5/
 │   ├── H7/
@@ -125,10 +131,12 @@ results/
    - `create_root_samples_file.py`: Creates sample files for root sequence extraction
    - `extract_root_sequence.py`: Infers root sequences from tree mutations
    - `simplified_host_classifier.py`: Host classification logic (used by augment_metadata.py)
-   - `augment_metadata.py`: Adds host_group, geographic_group, and temporal_group columns to metadata
+   - `augment_metadata.py`: Adds host_group, geographic_group, temporal_group, and subtype_group columns to metadata
    - `create_samples_file.py`: Creates sample files for subtree extraction by any metadata column
    - `pick_chronumental_reference.py`: Picks a chronumental reference sample near the chronological midpoint of the per-segment tree's date range, after restricting to dates that pass a cluster-density check
    - `prepare_chronumental_dates.py`: Builds the global `strain<TAB>date` TSV consumed by every chronumental job
+   - `prepare_host_annotation.py`: Builds the global 2-column (isolate_id, host_group) CSV consumed by PastML
+   - `prepare_subtype_annotation.py`: Builds the global 2-column (isolate_id, subtype_group) CSV consumed by PastML
 
 4. **notebooks/**: Jupyter notebooks for analysis and development
    - `analyze_alignments.ipynb`: Analyzes sequence statistics across segments/subtypes
@@ -152,11 +160,13 @@ results/
 14. **Create MAT Protobuf** → Converts sampled tree to MAT protobuf format
 15. **Reroot Tree** → Optionally reroots tree at specified node (matUtils extract)
 16. **Create Root Sequence** → Infers root sequence from tree or uses reference
-17. **Augment Metadata** → Adds host_group, geographic_group, and temporal_group columns
+17. **Augment Metadata** → Adds host_group, geographic_group, temporal_group, and subtype_group columns
 18. **Extract Subtrees** → Creates subtrees for each configured geographic region (matUtils extract)
 19. **Filter Long Branches** → Prunes terminals with branch length > `chronumental_max_branch_length` from final_tree.pb.gz to produce final_tree_chronumental_input.nwk
 20. **Date Per-Segment Trees** → Runs chronumental on each pruned per-segment newick to infer dates for every node, anchored on the earliest non-root dated sample as the reference
-21. **Create Visualizations** → Generates Taxonium format for full tree and geographic subtrees
+21. **Infer Per-Node Host States** → Runs PastML / DOWNPASS on each `final_tree.nwk` to reconstruct `host_group` at every node; outputs `{segment}/{subtype}/host_ancestral/combined_ancestral_states.tab`
+22. **Infer Per-Node Subtype States** → Runs PastML / DOWNPASS on each `final_tree.nwk` to reconstruct `subtype_group` (`H*N*`) at every node; outputs `{segment}/{subtype}/subtype_ancestral/combined_ancestral_states.tab`. Most informative on internal-segment trees where tips of different subtypes coexist.
+23. **Create Visualizations** → Generates Taxonium format for full tree and geographic subtrees
 
 ### Input Data Requirements
 
