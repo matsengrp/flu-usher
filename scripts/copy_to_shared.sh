@@ -38,17 +38,10 @@ for ss in "${SEGMENT_SUBTYPES[@]}"; do
     mkdir -p "$DEST/$ss/unaligned_coding_seqs"
     cp "$SRC/$ss/unaligned_coding_seqs/"*.fasta.xz "$DEST/$ss/unaligned_coding_seqs/"
 
-    # Chronumental outputs (only produced for HA/NA per-subtype trees)
-    if [ -f "$SRC/$ss/final_tree_dates.tsv" ]; then
-        cp "$SRC/$ss/final_tree_dates.tsv" "$DEST/$ss/"
-        cp "$SRC/$ss/chronumental_timetree_final_tree.nwk" "$DEST/$ss/"
-    fi
-
     echo "Copied $ss"
 done
 
-# Global metadata, chronumental input, and the input-data provenance manifest
-cp "$SRC/chronumental_dates.tsv" "$DEST/"
+# Global metadata and the input-data provenance manifest
 cp "$SRC/combined_metadata_augmented.csv" "$DEST/"
 cp "$SRC/host_annotation.csv" "$DEST/"
 cp "$SRC/input_data_md5sums.txt" "$DEST/"
