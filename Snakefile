@@ -3,9 +3,6 @@ import glob
 configfile: "config.yaml"
 
 
-_REFERENCE_FRACTIONS = {"early": 1.0 / 3.0, "mid": 0.5}
-
-
 # Discover every GISAID FASTA + XLS file across the configured input dirs at
 # parse time so the md5 manifest rule can list them as explicit inputs and be
 # reinvalidated whenever any of them change.
@@ -16,27 +13,11 @@ INPUT_DATA_FILES = sorted(
 )
 
 
-def _chronumental_target_fraction(segment, subtype):
-    """Look up the chronumental reference-target fraction for a tree."""
-    strategy_map = config.get("chronumental_reference_strategy", {})
-    key = f"{segment}/{subtype}"
-    strategy = strategy_map.get(key, "mid")
-    if strategy not in _REFERENCE_FRACTIONS:
-        raise ValueError(
-            f"chronumental_reference_strategy[{key!r}] = {strategy!r} is not "
-            f"one of {sorted(_REFERENCE_FRACTIONS)}"
-        )
-    return _REFERENCE_FRACTIONS[strategy]
-
-
 # Define the final outputs that should be created for each segment-subtype combination
 rule all:
     input:
         # Taxonium visualization trees for HA segments by subtype
         expand("results/HA/{subtype}/final_tree.jsonl.gz",
-               subtype=config["ha_subtypes"]),
-        # Chronumental-dated full HA subtype trees
-        expand("results/HA/{subtype}/final_tree_dates.tsv",
                subtype=config["ha_subtypes"]),
         # Unaligned coding sequences for HA segments by subtype (per-gene output directories)
         expand("results/HA/{subtype}/unaligned_coding_seqs/",
@@ -48,9 +29,6 @@ rule all:
         # Taxonium visualization trees for NA segments by subtype
         expand("results/NA/{subtype}/final_tree.jsonl.gz",
                subtype=config["na_subtypes"]),
-        # Chronumental-dated full NA subtype trees
-        expand("results/NA/{subtype}/final_tree_dates.tsv",
-               subtype=config["na_subtypes"]),
         # Unaligned coding sequences for NA segments by subtype (per-gene output directories)
         expand("results/NA/{subtype}/unaligned_coding_seqs/",
                subtype=config["na_subtypes"]),
@@ -61,11 +39,6 @@ rule all:
         # Taxonium visualization trees for other segments (all subtypes combined)
         expand("results/{segment}/all/final_tree.jsonl.gz",
                segment=[s for s in config["segments"] if s not in ["HA", "NA"]]),
-        # Chronumental dating is intentionally scoped to HA / NA per-subtype
-        # trees only. The combined-subtype internal-segment trees blow past
-        # pandas' 292-year Timedelta limit on internal-node date predictions
-        # because deep ancestral divergence weakens the branch-length / date
-        # correlation chronumental's model relies on.
         # Unaligned coding sequences for other segments (all subtypes combined, per-gene output directories)
         expand("results/{segment}/all/unaligned_coding_seqs/",
                segment=[s for s in config["segments"] if s not in ["HA", "NA"]]),
@@ -104,7 +77,6 @@ rule all:
         "results/notebooks/analyze_metadata.done",
         "results/notebooks/analyze_alignments.done",
         "results/notebooks/analyze_dags.done",
-        "results/notebooks/analyze_chronumental.done",
         # md5 manifest of all input GISAID data files
         "results/input_data_md5sums.txt"
 
@@ -608,25 +580,6 @@ rule convert_geographic_subtree_to_taxonium:
             &> {log}
         """
 
-# Build the global strain<TAB>date TSV consumed by every chronumental job.
-# Chronumental ignores strains in this file that aren't present in a given
-# tree, so a single global file works for every per-segment tree.
-rule prepare_chronumental_dates:
-    conda: "envs/python.yaml"
-    input:
-        metadata="results/combined_metadata_augmented.csv"
-    output:
-        "results/chronumental_dates.tsv"
-    log:
-        "logs/prepare_chronumental_dates.log"
-    shell:
-        """
-        python scripts/prepare_chronumental_dates.py \
-            --metadata {input.metadata} \
-            --output {output} \
-            &> {log}
-        """
-
 # Extract newick tree from final protobuf tree
 rule extract_final_newick:
     conda: "envs/usher.yaml"
@@ -639,110 +592,6 @@ rule extract_final_newick:
     shell:
         """
         matUtils extract -i {input.tree} -t {output.newick} &> {log}
-        """
-
-# Prune terminals with very long branches before chronumental dating.
-# These are typically synthetic reverse-genetics reassortants (e.g. PR8
-# backbone constructs) or other lab-derived sequences whose terminal
-# branches reflect engineering / passage rather than natural evolution.
-# Their length, combined with often-missing collection_date metadata,
-# pushes chronumental's SVI to assign extreme dates to internal nodes
-# and overflows pandas' 292-year timedelta limit when writing outputs.
-#
-# Uses matUtils end-to-end:
-#   - `summary -s` emits per-tip parsimony (= terminal branch length)
-#   - `extract -a N` writes a newick keeping only tips with parsimony < N
-# We pass N = max_branch_length + 1 so a threshold of 30 drops every tip
-# whose terminal branch length is strictly greater than 30.
-rule filter_long_branches:
-    conda: "envs/usher.yaml"
-    input:
-        tree="results/{segment}/{subtype}/final_tree.pb.gz"
-    output:
-        tree="results/{segment}/{subtype}/final_tree_chronumental_input.nwk",
-        dropped="results/{segment}/{subtype}/dropped_long_branches.tsv"
-    params:
-        max_branch_length=config.get("chronumental_max_branch_length", 30)
-    log:
-        "logs/{segment}/{subtype}/filter_long_branches.log"
-    shell:
-        """
-        # matUtils prepends -d (default cwd) to -s / -t paths, so use
-        # project-relative paths here rather than $TMPDIR.
-        # 1. Identify tips whose terminal branch length exceeds the threshold.
-        matUtils summary -i {input.tree} -s {output.dropped}.all &> {log}
-        awk -F'\\t' -v N={params.max_branch_length} \
-            'NR==1 || $2+0 > N' {output.dropped}.all > {output.dropped}
-        awk -F'\\t' 'NR>1 {{print $1}}' {output.dropped} > {output.dropped}.names
-        # 2. Prune exactly those samples from the tree so the audit TSV and
-        # the filtered newick agree on what was dropped (matUtils' -a flag has
-        # inclusive boundary semantics that don't match strict "branch > N").
-        matUtils extract -i {input.tree} -s {output.dropped}.names -p \
-            -t {output.tree} &>> {log}
-        rm {output.dropped}.all {output.dropped}.names
-        """
-
-# Pick a sample near the chronological midpoint of the per-segment tree's
-# date range as the chronumental reference. The midpoint strategy gives
-# better leaf residuals than anchoring on the earliest dated sample (see
-# PR #37 H5 reference-choice experiment: median |residual| 4 d at 1994
-# vs 13 d at 1968). A cluster-density filter ensures the chosen date is
-# part of a real cluster (>= min-cluster-size samples within +/-
-# cluster-window-years), so spurious metadata-error early dates can't
-# slip through.
-rule pick_chronumental_reference:
-    conda: "envs/python.yaml"
-    input:
-        curated_msa="results/{segment}/{subtype}/curated_msa.fasta.xz",
-        metadata="results/combined_metadata_augmented.csv",
-        root="results/{segment}/{subtype}/curated_root.fasta",
-        dropped="results/{segment}/{subtype}/dropped_long_branches.tsv"
-    output:
-        reference="results/{segment}/{subtype}/chronumental_reference.txt"
-    params:
-        target_fraction=lambda w: _chronumental_target_fraction(w.segment, w.subtype),
-    log:
-        "logs/{segment}/{subtype}/pick_chronumental_reference.log"
-    shell:
-        """
-        python scripts/pick_chronumental_reference.py \
-            --curated-msa {input.curated_msa} \
-            --metadata {input.metadata} \
-            --root {input.root} \
-            --dropped-tips {input.dropped} \
-            --target-fraction {params.target_fraction} \
-            --output {output.reference} \
-            &> {log}
-        """
-
-# Run chronumental on the full per-subtype tree to estimate dates for every
-# node. Uses the earliest non-root dated sample as the reference so the model
-# anchors on a real observation rather than the (possibly poorly-dated) root.
-rule chronumental_subtype:
-    conda: "envs/chronumental.yaml"
-    input:
-        tree="results/{segment}/{subtype}/final_tree_chronumental_input.nwk",
-        dates="results/chronumental_dates.tsv",
-        reference="results/{segment}/{subtype}/chronumental_reference.txt"
-    output:
-        dates="results/{segment}/{subtype}/final_tree_dates.tsv",
-        timetree="results/{segment}/{subtype}/chronumental_timetree_final_tree.nwk"
-    params:
-        chronumental_kwargs=config.get("chronumental_kwargs", "--steps 5000"),
-        reference_node=lambda w, input: open(input.reference).read().strip(),
-    log:
-        stdout="logs/{segment}/{subtype}/chronumental_subtype.stdout",
-        stderr="logs/{segment}/{subtype}/chronumental_subtype.stderr"
-    shell:
-        """
-        chronumental \
-            --tree {input.tree} \
-            {params.chronumental_kwargs} \
-            --reference_node {params.reference_node} \
-            --dates {input.dates} \
-            --dates_out {output.dates} \
-            --tree_out {output.timetree} \
-            > {log.stdout} 2> {log.stderr}
         """
 
 # Build a 2-column (isolate_id, host_group) CSV for PastML's --data argument.
@@ -845,11 +694,7 @@ rule execute_notebooks:
         na_trees=expand("results/NA/{subtype}/final_tree.jsonl.gz",
                        subtype=config["na_subtypes"]),
         other_trees=expand("results/{segment}/all/final_tree.jsonl.gz",
-                          segment=[s for s in config["segments"] if s not in ["HA", "NA"]]),
-        ha_dates=expand("results/HA/{subtype}/final_tree_dates.tsv",
-                        subtype=config["ha_subtypes"]),
-        na_dates=expand("results/NA/{subtype}/final_tree_dates.tsv",
-                        subtype=config["na_subtypes"])
+                          segment=[s for s in config["segments"] if s not in ["HA", "NA"]])
     output:
         "results/notebooks/{notebook}.done"
     log:
