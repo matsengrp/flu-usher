@@ -34,6 +34,17 @@ INPUT_DATA_FILES = sorted(
     for f in glob.glob(f"{d}/*.fasta") + glob.glob(f"{d}/*.xls")
 )
 
+# Fail at parse time rather than let input_data_md5sums degrade silently. With an
+# empty list, `md5sum {input} > {output}` becomes a bare `md5sum` reading stdin,
+# which writes "d41d8cd98f00b204e9800998ecf8427e  -" and exits 0 -- a provenance
+# manifest recording nothing. `set -euo pipefail` would not catch it, because
+# zero-argument md5sum succeeds.
+if not INPUT_DATA_FILES:
+    raise WorkflowError(
+        "No GISAID input files found. Looked for *.fasta and *.xls under: "
+        + ", ".join(config["input_dirs"])
+    )
+
 
 # Define the final outputs that should be created for each segment-subtype combination
 rule all:
