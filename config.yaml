@@ -83,6 +83,13 @@ max_frac_ambig: 0.00
 # Number of randomizations for alignment reordering
 n_randomizations: 10
 
+# Seed for sampling a single history out of the trimmed DAG (rule create_newick).
+# historydag's fast_sample() draws from Python's global `random`, so without this
+# every run produces a different sampled_tree.nh -- and therefore different
+# final_tree.*, geographic_trees/* and *_ancestral/* -- from a byte-identical
+# trimmed_dag.pb.
+tree_sample_seed: 0
+
 # Tree rerooting configuration
 # Strategy: Use early avian sequences to root trees
 # Format: "SEGMENT_SUBTYPE": "new_root_node"

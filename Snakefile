@@ -19,9 +19,10 @@ wildcard_constraints:
 # editing one leaves Snakemake reporting every downstream output up to date.
 # Declaring them as inputs closes that gap. Every script imports utils, so it is
 # always included.
-def script_deps(*script_names):
+def script_deps(*script_names, include_utils=True):
     """Input paths for a shell-invoked script plus the modules it imports."""
-    return ["scripts/" + name for name in script_names] + ["scripts/utils.py"]
+    deps = ["scripts/" + name for name in script_names]
+    return deps + ["scripts/utils.py"] if include_utils else deps
 
 
 # Discover every GISAID FASTA + XLS file across the configured input dirs at
@@ -372,25 +373,40 @@ rule larch_merge:
 rule trim_dag:
     conda: "envs/historydag.yaml"
     input:
-        dag_protobuf="results/{segment}/{subtype}/larch_merged_dag.pb"
+        dag_protobuf="results/{segment}/{subtype}/larch_merged_dag.pb",
+        script=script_deps("trim_dag.py", include_utils=False)
     output:
         trimmed_dag_protobuf="results/{segment}/{subtype}/trimmed_dag.pb"
     log:
         "logs/{segment}/{subtype}/trim_dag.log"
-    script:
-        "scripts/trim_dag.py"
+    shell:
+        """
+        PYTHONHASHSEED=0 python scripts/trim_dag.py \
+            --input {input.dag_protobuf} \
+            --output {output.trimmed_dag_protobuf} \
+            &> {log}
+        """
 
 # Create a newick tree from the trimmed DAG
 rule create_newick:
     conda: "envs/historydag.yaml"
     input:
-        dag_protobuf="results/{segment}/{subtype}/trimmed_dag.pb"
+        dag_protobuf="results/{segment}/{subtype}/trimmed_dag.pb",
+        script=script_deps("convert_DAG_protobuf_to_newick_samples.py", include_utils=False)
     output:
         newick="results/{segment}/{subtype}/sampled_tree.nh"
+    params:
+        seed=config.get("tree_sample_seed", 0)
     log:
         "logs/{segment}/{subtype}/create_newick.log"
-    script:
-        "scripts/convert_DAG_protobuf_to_newick_samples.py"
+    shell:
+        """
+        PYTHONHASHSEED=0 python scripts/convert_DAG_protobuf_to_newick_samples.py \
+            --input {input.dag_protobuf} \
+            --output {output.newick} \
+            --seed {params.seed} \
+            &> {log}
+        """
 
 # Create MAT protobuf from newick tree
 rule create_mat_protobuf:

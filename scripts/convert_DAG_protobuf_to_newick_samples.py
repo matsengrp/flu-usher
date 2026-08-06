@@ -1,9 +1,32 @@
+"""
+Sample a single history out of a trimmed DAG and write it as a newick tree.
+
+Reproducibility needs two things, and neither alone is sufficient:
+
+1. `random.seed(...)`. fast_sample() draws edges with random.choices() from
+   Python's global `random`; historydag documents seeding via random.seed.
+2. A fixed PYTHONHASHSEED, set by the create_newick rule. Clades are keyed on
+   frozensets of string labels, so the traversal order fast_sample() walks
+   depends on string hash randomisation. With the seed alone, four runs on one
+   byte-identical trimmed_dag.pb still produced four different trees.
+"""
+
+import argparse
+import random
+
 import historydag as hdag
 
-input_dag_path = snakemake.input.dag_protobuf
-output_newick_path = snakemake.output.newick
 
-dag = hdag.mutation_annotated_dag.load_MAD_protobuf_file(input_dag_path)
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Sample a history from a trimmed DAG and write it as newick"
+    )
+    parser.add_argument("--input", required=True, help="Trimmed DAG protobuf")
+    parser.add_argument("--output", required=True, help="Output newick file")
+    parser.add_argument(
+        "--seed", type=int, required=True, help="Seed for the history sample"
+    )
+    return parser.parse_args()
 
 
 def name_internal_nodes_distinctly(n):
@@ -21,9 +44,17 @@ def name_internal_nodes_distinctly(n):
     return ""
 
 
-with open(output_newick_path, "w") as f:
-    f.write(
-        dag.fast_sample().to_newick(
-            name_func=name_internal_nodes_distinctly, features=[], feature_funcs={}
-        )
+def main():
+    args = parse_args()
+    random.seed(args.seed)
+
+    dag = hdag.mutation_annotated_dag.load_MAD_protobuf_file(args.input)
+    newick = dag.fast_sample().to_newick(
+        name_func=name_internal_nodes_distinctly, features=[], feature_funcs={}
     )
+    with open(args.output, "w") as f:
+        f.write(newick)
+
+
+if __name__ == "__main__":
+    main()
