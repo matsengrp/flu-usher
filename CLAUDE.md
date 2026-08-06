@@ -17,7 +17,7 @@ conda env create -f environment.yml
 conda activate flu-usher
 ```
 
-Per-step dependencies are managed via separate conda environments in `envs/` (fatovcf, historydag, larch, nextclade, python, taxonium, usher). Snakemake creates and activates these automatically when run with `--use-conda`.
+Per-step dependencies are managed via separate conda environments in `envs/` (fatovcf, historydag, larch, nextclade, pastml, python, taxonium, usher). Snakemake creates and activates these automatically when run with `--use-conda`.
 
 ### Running the Pipeline
 ```bash
@@ -38,8 +38,11 @@ snakemake --cores 8 --use-conda results/HA/H5/geographic_trees/north_america_tre
 
 ### Workflow Control
 ```bash
-# Force rerun from a specific rule
-snakemake --forcerun <rule_name> --cores 8 --use-conda
+# Force rerun from a specific rule. --forcerun takes one-or-more arguments and
+# consumes everything up to the next flag, so put file targets BEFORE it --
+# `snakemake --forcerun <rule> <target>` silently treats <target> as another
+# rule to force and falls back to building `rule all`.
+snakemake --cores 8 --use-conda <target> --forcerun <rule_name>
 
 # Generate workflow visualization
 snakemake --dag | dot -Tpdf > workflow.pdf
@@ -60,7 +63,8 @@ results/
 │   │   ├── reference/
 │   │   ├── msa.fasta.xz
 │   │   ├── curated_msa.fasta.xz
-│   │   ├── curated_unaligned_coding_seqs.fasta.xz
+│   │   ├── unaligned_coding_seqs/               # one file per gene
+│   │   │   └── curated_unaligned_{GENE}.fasta.xz
 │   │   ├── curated_reference.{fasta,txt,gff,gtf}
 │   │   ├── curated_root.fasta
 │   │   ├── randomized_{0,1,2,...}/  # Multiple randomizations
@@ -90,6 +94,8 @@ results/
 ├── NA/          # NA segment results by subtype
 │   ├── N1/      # Same structure as HA subtypes
 │   ├── N2/
+│   ├── N6/
+│   ├── N8/
 │   └── N9/
 └── {PB2,PB1,PA,NP,MP,NS}/  # Internal segments
     └── all/     # All subtypes combined (same structure)
@@ -102,7 +108,7 @@ results/
    - Manages dependencies between steps
    - Handles parallel execution
 
-2. **config/config.yaml**: Configuration file containing:
+2. **config.yaml** (repo root, loaded by `Snakefile:3`): Configuration file containing:
    - Input directories for GISAID data
    - HA/NA subtypes to analyze
    - Reference sequences for each segment-subtype
@@ -126,6 +132,8 @@ results/
    - `create_samples_file.py`: Creates sample files for subtree extraction by any metadata column
    - `prepare_host_annotation.py`: Builds the global 2-column (isolate_id, host_group) CSV consumed by PastML
    - `prepare_subtype_annotation.py`: Builds the global 2-column (isolate_id, subtype) CSV consumed by PastML, normalizing the raw GISAID `subtype` ("A / H5N1") to `H*N*` form inline
+   - `utils.py`: Shared helpers imported by the above — `open_sequence_file()` for plain/gz/xz IO, `setup_logging()`, `sanitize_id()`, and the GFF parsing used to derive coding coordinates
+   - `test_curate_and_extract_coding_seqs.py`: unittest suite for the curation logic
 
 4. **notebooks/**: Jupyter notebooks for analysis and development
    - `analyze_alignments.ipynb`: Analyzes sequence statistics across segments/subtypes
@@ -136,7 +144,7 @@ results/
 1. **Parse GISAID Data** → Aggregates sequences from multiple input directories, splits by segment/subtype
 2. **Download References** → Fetches appropriate reference sequences for each segment-subtype
 3. **Align Sequences** → Uses Nextclade for codon-aware alignment
-4. **Curate Alignment** → Filters by quality (gaps < 5%, ambiguities < 1%) and extracts coding regions
+4. **Curate Alignment** → Filters by quality (`max_frac_gaps: 0.03`, `max_frac_ambig: 0.00` in `config.yaml`) and extracts coding regions
 5. **Create Unaligned Coding Sequences** → Extracts unaligned coding sequences from curated alignments
 6. **Randomize Alignments** → Creates multiple randomized versions of alignment (n_randomizations)
 7. **Create VCF** → Converts each randomized FASTA to variant format for UShER
@@ -154,6 +162,8 @@ results/
 19. **Infer Per-Node Host States** → Runs PastML / DOWNPASS on each `final_tree.nwk` to reconstruct `host_group` at every node; outputs `{segment}/{subtype}/host_ancestral/combined_ancestral_states.tab`
 20. **Infer Per-Node Subtype States** → Runs PastML / DOWNPASS on each `final_tree.nwk` to reconstruct `subtype` (`H*N*`, normalized from the raw GISAID `subtype` inside `prepare_subtype_annotation.py`) at every node; outputs `{segment}/{subtype}/subtype_ancestral/combined_ancestral_states.tab`. On HA per-subtype trees the H is fixed and only the inferred N partner varies (analogously for NA trees); on internal-segment trees neither letter is constrained, so the full `H*N*` can vary along the tree.
 21. **Create Visualizations** → Generates Taxonium format for full tree and geographic subtrees
+22. **Execute Notebooks** → Runs the notebooks under `notebooks/` once all 16 `final_tree.jsonl.gz` files exist; writes `results/notebooks/{notebook}.done` sentinels
+23. **Record Input md5sums** → Writes `results/input_data_md5sums.txt`, a provenance manifest over every FASTA/XLS file discovered under the configured `input_dirs`
 
 ### Input Data Requirements
 
@@ -164,7 +174,7 @@ The pipeline expects GISAID data in each input directory:
 
 ### Important Notes
 
-- No formal testing infrastructure or linting setup currently exists
+- Tests live in `scripts/test_curate_and_extract_coding_seqs.py` (94 unittest tests covering the curation and coding-sequence extraction logic). Run them with `python -m unittest test_curate_and_extract_coding_seqs` from within `scripts/`. No linting setup currently exists, and the other 14 script modules are untested.
 - The pipeline uses compressed outputs (.xz, .gz) to save disk space
 - All logs are saved in the `logs/` directory organized by segment/subtype
 - The pipeline can process multiple influenza subtypes simultaneously
