@@ -1287,102 +1287,119 @@ class TestExtractGeneCds(unittest.TestCase):
 class TestValidateCds(unittest.TestCase):
     """Tests for validate_cds() function"""
 
-    def setUp(self):
-        """Set up logger for tests"""
-        self.logger = logging.getLogger('test_logger_validate')
-        self.logger.setLevel(logging.DEBUG)
-        self.log_capture = StringIO()
-        handler = logging.StreamHandler(self.log_capture)
-        handler.setLevel(logging.DEBUG)
-        self.logger.addHandler(handler)
+    # validate_cds records failures in stats counters rather than logging them
+    # per sequence -- 70fb3ab removed the four logger.warning calls these tests
+    # used to assert on. The counters are what main() reports in aggregate under
+    # "Per-gene CDS validation failures", so they are what is checked here.
+    FAILURE_KEYS = (
+        'fragment_validation', 'wrong_length', 'too_short',
+        'missing_start_codon', 'missing_stop_codon',
+    )
 
-    def tearDown(self):
-        """Clean up logger handlers"""
-        self.logger.handlers.clear()
+    def setUp(self):
+        """Fresh stats dict, shaped as main() builds it."""
+        self.stats = {
+            'gene_validation_failures': {
+                'HA': {key: 0 for key in self.FAILURE_KEYS}
+            }
+        }
+
+    def assertFailureRecorded(self, reason):
+        """Exactly the named counter incremented, and nothing else."""
+        counts = self.stats['gene_validation_failures']['HA']
+        self.assertEqual(counts[reason], 1, f"{reason} was not incremented")
+        for key in self.FAILURE_KEYS:
+            if key != reason:
+                self.assertEqual(counts[key], 0, f"{key} incremented unexpectedly")
 
     def test_valid_cds_all_checks_pass(self):
         """Valid CDS with TAA stop codon"""
-        result = validate_cds(VALID_CDS_PERGENE, "HA", "seq1", self.logger)
+        result = validate_cds(VALID_CDS_PERGENE, "HA", "seq1", self.stats)
         self.assertTrue(result)
 
     def test_valid_cds_with_tag_stop(self):
         """Valid CDS with TAG stop codon"""
         cds = "ATGCGATCGTAG"
-        result = validate_cds(cds, "HA", "seq1", self.logger)
+        result = validate_cds(cds, "HA", "seq1", self.stats)
         self.assertTrue(result)
 
     def test_valid_cds_with_tga_stop(self):
         """Valid CDS with TGA stop codon"""
         cds = "ATGCGATCGTGA"
-        result = validate_cds(cds, "HA", "seq1", self.logger)
+        result = validate_cds(cds, "HA", "seq1", self.stats)
         self.assertTrue(result)
 
     def test_invalid_frame_remainder_one(self):
         """CDS with length not divisible by 3 (remainder 1)"""
-        result = validate_cds(INVALID_FRAME_CDS_PERGENE, "HA", "seq1", self.logger)
+        result = validate_cds(INVALID_FRAME_CDS_PERGENE, "HA", "seq1", self.stats)
 
         self.assertFalse(result)
-        log_output = self.log_capture.getvalue()
-        self.assertIn("not divisible by 3", log_output)
+        self.assertFailureRecorded("wrong_length")
 
     def test_invalid_frame_remainder_two(self):
         """CDS with length not divisible by 3 (remainder 2)"""
         cds = "ATGCGATCGTAAGG"  # 14 bp
-        result = validate_cds(cds, "HA", "seq1", self.logger)
+        result = validate_cds(cds, "HA", "seq1", self.stats)
 
         self.assertFalse(result)
-        log_output = self.log_capture.getvalue()
-        self.assertIn("not divisible by 3", log_output)
+        self.assertFailureRecorded("wrong_length")
 
     def test_missing_start_codon(self):
         """CDS without ATG start codon"""
         cds = "TTGCGATCGTAA"
-        result = validate_cds(cds, "HA", "seq1", self.logger)
+        result = validate_cds(cds, "HA", "seq1", self.stats)
 
         self.assertFalse(result)
-        log_output = self.log_capture.getvalue()
-        self.assertIn("does not start with ATG", log_output)
+        self.assertFailureRecorded("missing_start_codon")
 
     def test_missing_stop_codon(self):
         """CDS without proper stop codon"""
         cds = "ATGCGATCGTTA"  # Ends with TTA, not a stop codon
-        result = validate_cds(cds, "HA", "seq1", self.logger)
+        result = validate_cds(cds, "HA", "seq1", self.stats)
 
         self.assertFalse(result)
-        log_output = self.log_capture.getvalue()
-        self.assertIn("does not end with stop codon", log_output)
+        self.assertFailureRecorded("missing_stop_codon")
 
     def test_too_short_sequence(self):
         """CDS too short (only start codon)"""
         cds = "ATG"
-        result = validate_cds(cds, "HA", "seq1", self.logger)
+        result = validate_cds(cds, "HA", "seq1", self.stats)
 
         self.assertFalse(result)
-        log_output = self.log_capture.getvalue()
-        self.assertIn("too short", log_output)
+        self.assertFailureRecorded("too_short")
 
     def test_case_insensitive_validation(self):
         """Validation should be case-insensitive"""
         cds = "atgcgatcgtaa"  # Lowercase
-        result = validate_cds(cds, "HA", "seq1", self.logger)
+        result = validate_cds(cds, "HA", "seq1", self.stats)
         self.assertTrue(result)
 
     def test_empty_sequence(self):
         """Empty sequence should fail validation"""
         cds = ""
-        result = validate_cds(cds, "HA", "seq1", self.logger)
+        result = validate_cds(cds, "HA", "seq1", self.stats)
 
         self.assertFalse(result)
-        log_output = self.log_capture.getvalue()
-        self.assertIn("too short", log_output)
+        self.assertFailureRecorded("too_short")
 
-    def test_logging_contains_gene_name_and_seq_id(self):
-        """Log messages should include gene name and sequence ID"""
-        result = validate_cds(INVALID_FRAME_CDS_PERGENE, "HA", "test_seq", self.logger)
+    def test_failures_are_attributed_to_the_right_gene(self):
+        """Counters are keyed per gene, so a failure lands on that gene only.
+
+        Replaces a test that asserted the log line carried "test_seq|HA".
+        validate_cds no longer logs per sequence, so gene keying is the
+        attribution that remains checkable.
+        """
+        self.stats['gene_validation_failures']['NA'] = {
+            key: 0 for key in self.FAILURE_KEYS
+        }
+        result = validate_cds(INVALID_FRAME_CDS_PERGENE, "HA", "test_seq", self.stats)
 
         self.assertFalse(result)
-        log_output = self.log_capture.getvalue()
-        self.assertIn("test_seq|HA", log_output)
+        self.assertFailureRecorded("wrong_length")
+        self.assertTrue(
+            all(v == 0 for v in self.stats['gene_validation_failures']['NA'].values()),
+            "failure leaked onto another gene's counters",
+        )
 
 
 if __name__ == "__main__":
