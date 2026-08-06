@@ -6,6 +6,9 @@ PastML's --data argument.
 import argparse
 
 import pandas as pd
+from utils import setup_logging
+
+logger = setup_logging(__name__)
 
 
 def main():
@@ -18,7 +21,7 @@ def main():
 
     df = pd.read_csv(args.input, usecols=["isolate_id", "host_group"])
     df.to_csv(args.output, index=False)
-    print(f"Wrote {len(df)} rows to {args.output}")
+    logger.info(f"Wrote {len(df)} rows to {args.output}")
 
 
 if __name__ == "__main__":

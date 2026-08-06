@@ -12,7 +12,6 @@ Key features:
 """
 
 import argparse
-import lzma
 import logging
 import os
 import pandas as pd
@@ -20,6 +19,7 @@ from Bio import SeqIO
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
 from utils import (
+    open_sequence_file,
     setup_logging,
     sanitize_id,
     extract_all_genes_and_cds,
@@ -587,7 +587,7 @@ def validate_against_raw_sequences(unaligned_records, raw_sequences_file):
 
     # Load raw sequences and create a dictionary
     raw_seqs_dict = {}
-    with lzma.open(raw_sequences_file, 'rt') as handle:
+    with open_sequence_file(raw_sequences_file, 'rt') as handle:
         for record in SeqIO.parse(handle, 'fasta'):
             # Sanitize the ID to match curated sequences
             sanitized_id = sanitize_id(record.id)
@@ -640,7 +640,7 @@ def validate_against_raw_sequences(unaligned_records, raw_sequences_file):
 
 def main():
     args = parse_args()
-    logger = setup_logging()
+    logger = setup_logging(__name__)
 
     logger.info("=" * 80)
     logger.info("COMBINED CURATION AND CDS EXTRACTION PIPELINE")
@@ -691,7 +691,7 @@ def main():
     # Load raw sequences for validation
     logger.info(f"Loading raw sequences from {args.raw_sequences}")
     raw_seqs_dict = {}
-    with lzma.open(args.raw_sequences, 'rt') as handle:
+    with open_sequence_file(args.raw_sequences, 'rt') as handle:
         for raw_record in SeqIO.parse(handle, 'fasta'):
             sanitized_id = sanitize_id(raw_record.id)
             raw_seqs_dict[sanitized_id] = str(raw_record.seq).upper()
@@ -699,7 +699,7 @@ def main():
 
     # Read original MSA
     logger.info(f"Reading alignment from {args.input}")
-    with lzma.open(args.input, 'rt') as handle:
+    with open_sequence_file(args.input, 'rt') as handle:
         records = list(SeqIO.parse(handle, 'fasta'))
     logger.info(f"Read {len(records)} sequences")
 
@@ -829,7 +829,7 @@ def main():
 
     # Write curated MSA
     logger.info(f"Writing {len(curated_records)} curated sequences to {output_curated_msa}")
-    with lzma.open(output_curated_msa, 'wt') as handle:
+    with open_sequence_file(output_curated_msa, 'wt') as handle:
         SeqIO.write(curated_records, handle, 'fasta')
 
     # Write reference files
@@ -852,7 +852,7 @@ def main():
             f"curated_unaligned_{gene_name}.fasta.xz"
         )
         logger.info(f"Writing {len(records)} sequences for {gene_name} to {output_file}")
-        with lzma.open(output_file, 'wt') as handle:
+        with open_sequence_file(output_file, 'wt') as handle:
             SeqIO.write(records, handle, 'fasta')
 
     # ========================================================================

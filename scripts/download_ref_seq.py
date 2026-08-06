@@ -5,6 +5,9 @@ import argparse
 import sys
 import time
 import yaml
+from utils import setup_logging
+
+logger = setup_logging(__name__)
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Download reference sequences for flu-usher")
@@ -25,7 +28,7 @@ def download_gene_sequence(accession, output_dir):
     with open(output_fasta, "w") as f:
         f.write(sequence)
 
-    print(f"  Sequence saved to {output_fasta}")
+    logger.info(f"Sequence saved to {output_fasta}")
     return output_fasta
 
 def download_gene_gff(accession, output_dir):
@@ -45,7 +48,7 @@ def download_gene_gff(accession, output_dir):
     with open(output_gff, "w") as f:
         f.write(gff_content)
 
-    print(f"  GFF saved to {output_gff}")
+    logger.info(f"GFF saved to {output_gff}")
     return output_gff
 
 def create_pathogen_json(output_dir, fasta_file, gff_file):
@@ -67,7 +70,7 @@ def create_pathogen_json(output_dir, fasta_file, gff_file):
     with open(json_file_path, 'w') as f:
         json.dump(pathogen_json, f, indent=2)
 
-    print(f"  Pathogen JSON saved to {json_file_path}")
+    logger.info(f"Pathogen JSON saved to {json_file_path}")
     return json_file_path
 
 def download_reference_set(segment, subtype, accession, output_base_dir):
@@ -75,13 +78,13 @@ def download_reference_set(segment, subtype, accession, output_base_dir):
     # Create output directory
     output_dir = os.path.join(output_base_dir, segment, subtype, "reference")
 
-    print(f"\nProcessing {segment}/{subtype} (accession: {accession})")
+    logger.info(f"Processing {segment}/{subtype} (accession: {accession})")
 
     if not os.path.isdir(output_dir):
         os.makedirs(output_dir)
-        print(f"  Created directory: {output_dir}")
+        logger.info(f"Created directory: {output_dir}")
     else:
-        print(f"  Directory exists: {output_dir}")
+        logger.info(f"Directory exists: {output_dir}")
 
     try:
         # Download FASTA
@@ -96,11 +99,11 @@ def download_reference_set(segment, subtype, accession, output_base_dir):
         # Create pathogen.json
         json_file = create_pathogen_json(output_dir, fasta_file, gff_file)
 
-        print(f"  ✓ Successfully downloaded reference files for {segment}/{subtype}")
+        logger.info(f"Successfully downloaded reference files for {segment}/{subtype}")
         return True
 
     except Exception as e:
-        print(f"  ✗ Error downloading reference for {segment}/{subtype}: {e}", file=sys.stderr)
+        logger.error(f"Error downloading reference for {segment}/{subtype}: {e}")
         return False
 
 def main():
@@ -110,7 +113,7 @@ def main():
     Entrez.email = 'test_window238476@gmail.com'
 
     # Load config file
-    print(f"Loading configuration from {args.config}")
+    logger.info(f"Loading configuration from {args.config}")
     with open(args.config, 'r') as f:
         config = yaml.safe_load(f)
 
@@ -136,20 +139,19 @@ def main():
             if ref_key in config["references"]:
                 combinations.append((segment, "all", config["references"][ref_key]))
 
-    print(f"\nFound {len(combinations)} segment/subtype combinations to process")
-    print(f"Wait time between downloads: {args.wait_time} seconds")
-    print(f"Estimated total runtime: ~{len(combinations) * args.wait_time // 60} minutes\n")
-    print("=" * 70)
+    logger.info(f"Found {len(combinations)} segment/subtype combinations to process")
+    logger.info(f"Wait time between downloads: {args.wait_time} seconds")
+    logger.info(f"Estimated total runtime: ~{len(combinations) * args.wait_time // 60} minutes")
 
     # Process each combination sequentially
     success_count = 0
     for i, (segment, subtype, accession) in enumerate(combinations, 1):
         # Wait before downloading (except for first download)
         if i > 1:
-            print(f"\nWaiting {args.wait_time} seconds before next download...")
+            logger.info(f"Waiting {args.wait_time} seconds before next download...")
             time.sleep(args.wait_time)
 
-        print(f"\n[{i}/{len(combinations)}]", end=" ")
+        logger.info(f"[{i}/{len(combinations)}]")
 
         # Download reference files
         success = download_reference_set(segment, subtype, accession, args.output_base_dir)
@@ -157,13 +159,12 @@ def main():
         if success:
             success_count += 1
         else:
-            print(f"\nFailed to download reference for {segment}/{subtype}", file=sys.stderr)
+            logger.error(f"Failed to download reference for {segment}/{subtype}")
             sys.exit(1)
 
     # Final summary
-    print("\n" + "=" * 70)
-    print(f"\nCompleted: {success_count}/{len(combinations)} downloads successful")
-    print(f"All reference data downloaded successfully to {args.output_base_dir}\n")
+    logger.info(f"Completed: {success_count}/{len(combinations)} downloads successful")
+    logger.info(f"All reference data downloaded successfully to {args.output_base_dir}")
 
 if __name__ == "__main__":
     main()

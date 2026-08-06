@@ -7,12 +7,14 @@ import argparse
 import os
 import sys
 import glob
-import lzma
 import pandas as pd
 from Bio import SeqIO
 from Bio.SeqRecord import SeqRecord
 from collections import defaultdict
 import re
+from utils import open_sequence_file, setup_logging
+
+logger = setup_logging(__name__)
 
 def parse_args():
     """Parse command line arguments"""
@@ -41,7 +43,7 @@ def main():
     # Parse command line arguments
     args = parse_args()
     
-    print(f"Processing data from {len(args.input_dirs)} input directories")
+    logger.info(f"Processing data from {len(args.input_dirs)} input directories")
     
     # Create output directory if it doesn't exist
     if not os.path.exists(args.output_dir):
@@ -64,23 +66,23 @@ def main():
     # Process each input directory
     for data_dir in args.input_dirs:
         if not os.path.exists(data_dir):
-            print(f"Warning: Directory {data_dir} does not exist, skipping")
+            logger.warning(f"Directory {data_dir} does not exist, skipping")
             continue
             
-        print(f"\nProcessing directory: {data_dir}")
+        logger.info(f"Processing directory: {data_dir}")
         
         fasta_files = glob.glob(os.path.join(data_dir, "*.fasta"))
         metadata_files = glob.glob(os.path.join(data_dir, "*.xls"))
         
         if len(fasta_files) == 0 or len(metadata_files) == 0:
-            print(f"Warning: Expected at least one FASTA file and one XLS file in {data_dir}")
-            print(f"Found {len(fasta_files)} FASTA files and {len(metadata_files)} XLS files")
+            logger.warning(f"Expected at least one FASTA file and one XLS file in {data_dir}")
+            logger.warning(f"Found {len(fasta_files)} FASTA files and {len(metadata_files)} XLS files")
             continue
         
         # Process FASTA files
         for fasta_file in fasta_files:
             records = list(SeqIO.parse(fasta_file, "fasta"))
-            print(f"  Read {len(records)} records from {fasta_file}")
+            logger.info(f"Read {len(records)} records from {fasta_file}")
             
             for record in records:
                 try:
@@ -98,7 +100,7 @@ def main():
                         if ha_subtype:
                             group_key = ha_subtype
                         else:
-                            print(f"Warning: Could not extract HA subtype from {seq_subtype}")
+                            logger.warning(f"Could not extract HA subtype from {seq_subtype}")
                             continue
                     elif segment == 'NA':
                         # Extract N subtype (e.g., N1 from H1N1)
@@ -106,7 +108,7 @@ def main():
                         if na_subtype:
                             group_key = na_subtype
                         else:
-                            print(f"Warning: Could not extract NA subtype from {seq_subtype}")
+                            logger.warning(f"Could not extract NA subtype from {seq_subtype}")
                             continue
                     else:
                         # For non-HA/NA segments, group all together
@@ -114,7 +116,7 @@ def main():
                     
                     # Skip record if we've already seen this EPI_ISL ID for this segment-group combination
                     if epi_isl in segment_subtype_epi_isl_ids[segment][group_key]:
-                        print(f"Warning: Duplicate EPI_ISL ID {epi_isl} found for segment {segment} group {group_key}. Skipping.")
+                        logger.warning(f"Duplicate EPI_ISL ID {epi_isl} found for segment {segment} group {group_key}. Skipping.")
                         continue
                     
                     segment_subtype_epi_isl_ids[segment][group_key].add(epi_isl)
@@ -127,13 +129,13 @@ def main():
                     segment_records[segment][group_key].append(record)
                     
                 except ValueError:
-                    print(f"Warning: Could not parse ID for record: {record.id}")
+                    logger.warning(f"Could not parse ID for record: {record.id}")
                     continue
         
         # Process metadata files
         for metadata_file in metadata_files:
             df = pd.read_excel(metadata_file, sheet_name=0)
-            print(f"  Read {len(df)} metadata records from {metadata_file}")
+            logger.info(f"Read {len(df)} metadata records from {metadata_file}")
             
             # Subset to columns of interest
             cols = [
@@ -154,18 +156,18 @@ def main():
         
         # Remove duplicate isolate_ids (keep first occurrence)
         if metadata_df.duplicated(subset=['isolate_id']).sum() > 0:
-            print(f"Warning: Found {metadata_df.duplicated(subset=['isolate_id']).sum()} duplicate isolate_ids in metadata, keeping first occurrence")
+            logger.warning(f"Found {metadata_df.duplicated(subset=['isolate_id']).sum()} duplicate isolate_ids in metadata, keeping first occurrence")
             metadata_df = metadata_df.drop_duplicates(subset=['isolate_id'], keep='first')
         
         # Write combined metadata to CSV
         metadata_output_file = os.path.join(args.output_dir, "combined_metadata.csv")
-        print(f"\nWriting combined metadata to {metadata_output_file}")
+        logger.info(f"Writing combined metadata to {metadata_output_file}")
         metadata_df.to_csv(metadata_output_file, index=False)
     else:
-        print("Warning: No metadata files were processed")
+        logger.warning("No metadata files were processed")
     
     # Write sequences to output files organized by segment and subtype
-    print("\nSummary of records by segment and subtype:")
+    logger.info("Summary of records by segment and subtype:")
     for segment, groups in segment_records.items():
         for group_key, records in groups.items():
             # Create output directory path as segment/group
@@ -174,10 +176,10 @@ def main():
                 os.makedirs(segment_output_dir)
             
             output_file = os.path.join(segment_output_dir, "raw_sequences.fasta.xz")
-            with lzma.open(output_file, 'wt') as handle:
+            with open_sequence_file(output_file, 'wt') as handle:
                 SeqIO.write(records, handle, "fasta")
             
-            print(f"  {segment}/{group_key}: {len(records)} records written to {output_file}")
+            logger.info(f"{segment}/{group_key}: {len(records)} records written to {output_file}")
 
 if __name__ == "__main__":
     sys.exit(main())
