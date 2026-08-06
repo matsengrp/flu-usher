@@ -22,6 +22,10 @@ def parse_args():
     parser.add_argument('--input-dirs', nargs='+', required=True, help='Input directories containing GISAID data')
     parser.add_argument('--output-dir', required=True, help='Output directory for results')
     parser.add_argument('--segments', nargs='+', help='List of segments to process (e.g., HA NA)')
+    parser.add_argument('--ha-subtypes', nargs='+', required=True,
+                        help='HA subtypes to write (e.g. H1 H3). Records of any other HA subtype are dropped.')
+    parser.add_argument('--na-subtypes', nargs='+', required=True,
+                        help='NA subtypes to write (e.g. N1 N2). Records of any other NA subtype are dropped.')
     return parser.parse_args()
 
 def extract_ha_na_subtype(subtype_str):
@@ -51,6 +55,22 @@ def main():
     
     # List of segments to keep (from config file or all segments if not specified)
     valid_segments = set(args.segments) if args.segments else None
+
+    # Only configured subtypes are written. Without this the script produced 30
+    # segment/subtype directories against 16 configured combinations, and the 14
+    # extras were consumed by nothing.
+    valid_ha_subtypes = set(args.ha_subtypes)
+    valid_na_subtypes = set(args.na_subtypes)
+    expected_combinations = (
+        {('HA', st) for st in valid_ha_subtypes}
+        | {('NA', st) for st in valid_na_subtypes}
+        | {(seg, 'all') for seg in (valid_segments or set()) if seg not in ('HA', 'NA')}
+    )
+
+    # Every record that does not reach an output file is counted under exactly one
+    # reason, so the totals below reconcile against the number read.
+    skipped = defaultdict(int)
+    total_records_read = 0
     
     # Iterate over sequences, group by segment (and subtype for HA/NA)
     # For HA/NA: segment_records[segment][subtype] = [records]
@@ -87,6 +107,7 @@ def main():
         # Process FASTA files
         for fasta_file in fasta_files:
             records = list(SeqIO.parse(fasta_file, "fasta"))
+            total_records_read += len(records)
             logger.info(f"Read {len(records)} records from {fasta_file}")
             
             for record in records:
@@ -96,32 +117,40 @@ def main():
                     
                     # Skip segments not in the config file
                     if valid_segments and segment not in valid_segments:
+                        skipped['segment_not_configured'] += 1
                         continue
                     
                     # Determine the grouping key based on segment type
                     if segment == 'HA':
                         # Extract H subtype (e.g., H1 from H1N1)
                         ha_subtype, _ = extract_ha_na_subtype(seq_subtype)
-                        if ha_subtype:
-                            group_key = ha_subtype
-                        else:
-                            logger.warning(f"Could not extract HA subtype from {seq_subtype}")
+                        if not ha_subtype:
+                            skipped['ha_subtype_unparseable'] += 1
                             continue
+                        if ha_subtype not in valid_ha_subtypes:
+                            skipped['ha_subtype_not_configured'] += 1
+                            continue
+                        group_key = ha_subtype
                     elif segment == 'NA':
                         # Extract N subtype (e.g., N1 from H1N1)
                         _, na_subtype = extract_ha_na_subtype(seq_subtype)
-                        if na_subtype:
-                            group_key = na_subtype
-                        else:
-                            logger.warning(f"Could not extract NA subtype from {seq_subtype}")
+                        if not na_subtype:
+                            skipped['na_subtype_unparseable'] += 1
                             continue
+                        if na_subtype not in valid_na_subtypes:
+                            skipped['na_subtype_not_configured'] += 1
+                            continue
+                        group_key = na_subtype
                     else:
                         # For non-HA/NA segments, group all together
                         group_key = 'all'
                     
                     # Skip record if we've already seen this EPI_ISL ID for this segment-group combination
                     if epi_isl in segment_subtype_epi_isl_ids[segment][group_key]:
-                        logger.warning(f"Duplicate EPI_ISL ID {epi_isl} found for segment {segment} group {group_key}. Skipping.")
+                        # Legitimate and expected: the download windows in
+                        # data/H3N2/ and data/H1N1/ overlap by design. Reported in
+                        # aggregate rather than one warning per record.
+                        skipped['duplicate_epi_isl'] += 1
                         continue
                     
                     segment_subtype_epi_isl_ids[segment][group_key].add(epi_isl)
@@ -134,7 +163,7 @@ def main():
                     segment_records[segment][group_key].append(record)
                     
                 except ValueError:
-                    logger.warning(f"Could not parse ID for record: {record.id}")
+                    skipped['unparseable_sequence_id'] += 1
                     continue
         
         # Process metadata files
@@ -168,23 +197,74 @@ def main():
         metadata_output_file = os.path.join(args.output_dir, "combined_metadata.csv")
         logger.info(f"Writing combined metadata to {metadata_output_file}")
         metadata_df.to_csv(metadata_output_file, index=False)
+        metadata_written = True
     else:
-        logger.warning("No metadata files were processed")
+        logger.error("No metadata files were processed")
+        metadata_written = False
     
     # Write sequences to output files organized by segment and subtype
     logger.info("Summary of records by segment and subtype:")
+    written_counts = {}
     for segment, groups in segment_records.items():
         for group_key, records in groups.items():
             # Create output directory path as segment/group
             segment_output_dir = os.path.join(args.output_dir, segment, group_key)
             if not os.path.isdir(segment_output_dir):
                 os.makedirs(segment_output_dir)
-            
+
             output_file = os.path.join(segment_output_dir, "raw_sequences.fasta.xz")
             with open_sequence_file(output_file, 'wt') as handle:
                 SeqIO.write(records, handle, "fasta")
-            
+
+            written_counts[(segment, group_key)] = len(records)
             logger.info(f"{segment}/{group_key}: {len(records)} records written to {output_file}")
+
+    # Aggregate accounting. Every record read is either written or counted under
+    # exactly one skip reason, so these totals reconcile.
+    total_written = sum(written_counts.values())
+    total_skipped = sum(skipped.values())
+    logger.info("")
+    logger.info("Record accounting:")
+    logger.info(f"  read:    {total_records_read:,}")
+    logger.info(f"  written: {total_written:,}")
+    logger.info(f"  skipped: {total_skipped:,}")
+    for reason in sorted(skipped):
+        logger.info(f"    - {reason.replace('_', ' ')}: {skipped[reason]:,}")
+    if total_records_read != total_written + total_skipped:
+        logger.warning(
+            f"Accounting does not reconcile: {total_records_read:,} read but "
+            f"{total_written:,} written + {total_skipped:,} skipped"
+        )
+
+    # Fail loudly. Previously main() had no return, so `sys.exit(main())` was
+    # always `sys.exit(None)` -- exit 0 even if every record had been dropped or
+    # no metadata written, and Snakemake would record the outputs as good.
+    errors = []
+    if not metadata_written:
+        errors.append("no metadata was written")
+    missing = sorted(expected_combinations - set(written_counts))
+    if missing:
+        errors.append(
+            "configured combinations produced no sequences: "
+            + ", ".join(f"{seg}/{sub}" for seg, sub in missing)
+        )
+    empty = sorted(c for c, n in written_counts.items() if n == 0)
+    if empty:
+        errors.append(
+            "configured combinations wrote zero records: "
+            + ", ".join(f"{seg}/{sub}" for seg, sub in empty)
+        )
+    if errors:
+        for err in errors:
+            logger.error(err)
+        return 1
+
+    logger.info(
+        f"Wrote {len(written_counts)} segment/subtype combinations "
+        f"({len(expected_combinations)} configured)"
+    )
+    return 0
+
 
 if __name__ == "__main__":
     sys.exit(main())

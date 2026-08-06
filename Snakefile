@@ -129,7 +129,9 @@ rule parse_gisaid_data:
                      segment=[s for s in config["segments"] if s not in ["HA", "NA"]])
     params:
         input_dirs=config["input_dirs"],
-        segments=" ".join(config["segments"])
+        segments=" ".join(config["segments"]),
+        ha_subtypes=" ".join(config["ha_subtypes"]),
+        na_subtypes=" ".join(config["na_subtypes"])
     log:
         "logs/parse_gisaid_data.log"
     shell:
@@ -138,6 +140,8 @@ rule parse_gisaid_data:
             --input-dirs {params.input_dirs} \
             --output-dir results \
             --segments {params.segments} \
+            --ha-subtypes {params.ha_subtypes} \
+            --na-subtypes {params.na_subtypes} \
             &> {log}
         """
 
