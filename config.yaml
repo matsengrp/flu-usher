@@ -25,6 +25,10 @@ input_dirs:
   - "data/H13NX"
   - "data/H14NX"
   - "data/H15NX"
+  # data/H16NX/ exists on disk but is deliberately excluded: H16 has very little
+  # data. Adding it would introduce an HA/H16 combination and shift the internal
+  # segment ("all") trees, for negligible gain. If you add it here, also expect
+  # results/input_data_md5sums.txt to grow from 90 to 92 entries.
 
 # Segments to analyze
 segments:
