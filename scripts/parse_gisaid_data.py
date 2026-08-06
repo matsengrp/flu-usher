@@ -71,8 +71,13 @@ def main():
             
         logger.info(f"Processing directory: {data_dir}")
         
-        fasta_files = glob.glob(os.path.join(data_dir, "*.fasta"))
-        metadata_files = glob.glob(os.path.join(data_dir, "*.xls"))
+        # sorted(): glob returns readdir order, which is arbitrary. Record order
+        # in raw_sequences.fasta.xz feeds randomize_alignment --seed {n} and
+        # decides which duplicate survives the keep-first dedup below, so an
+        # unsorted glob makes the trees depend on filesystem layout.
+        # Snakefile's INPUT_DATA_FILES already applies this discipline.
+        fasta_files = sorted(glob.glob(os.path.join(data_dir, "*.fasta")))
+        metadata_files = sorted(glob.glob(os.path.join(data_dir, "*.xls")))
         
         if len(fasta_files) == 0 or len(metadata_files) == 0:
             logger.warning(f"Expected at least one FASTA file and one XLS file in {data_dir}")
