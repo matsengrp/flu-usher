@@ -13,6 +13,17 @@ wildcard_constraints:
     notebook="[A-Za-z0-9_]+",
 
 
+
+# Only rules using Snakemake's `script:` directive are code-tracked. The ten
+# scripts invoked as `shell: python scripts/x.py` appear in no input: block, so
+# editing one leaves Snakemake reporting every downstream output up to date.
+# Declaring them as inputs closes that gap. Every script imports utils, so it is
+# always included.
+def script_deps(*script_names):
+    """Input paths for a shell-invoked script plus the modules it imports."""
+    return ["scripts/" + name for name in script_names] + ["scripts/utils.py"]
+
+
 # Discover every GISAID FASTA + XLS file across the configured input dirs at
 # parse time so the md5 manifest rule can list them as explicit inputs and be
 # reinvalidated whenever any of them change.
@@ -93,6 +104,8 @@ rule all:
 # Parse GISAID data files from all input directories at once
 rule parse_gisaid_data:
     conda: "envs/python.yaml"
+    input:
+        script=script_deps("parse_gisaid_data.py")
     output:
         metadata="results/combined_metadata.csv",
         # Generate output files for each segment-subtype combination
@@ -143,7 +156,8 @@ rule download_all_references:
     input:
         # Declared as an input, not just a params path: the accessions live in
         # config.yaml, so editing one must re-trigger the download.
-        config_file="config.yaml"
+        config_file="config.yaml",
+        script=script_deps("download_ref_seq.py")
     params:
         wait_time=30
     log:
@@ -195,7 +209,8 @@ rule curate_and_extract_coding_seqs:
         alignment="results/{segment}/{subtype}/msa.fasta.xz",
         gff="results/{segment}/{subtype}/reference/reference.gff",
         tsv="results/{segment}/{subtype}/msa.tsv.xz",
-        raw_sequences="results/{segment}/{subtype}/raw_sequences.fasta.xz"
+        raw_sequences="results/{segment}/{subtype}/raw_sequences.fasta.xz",
+        script=script_deps("curate_and_extract_coding_seqs.py")
     output:
         # Curated MSA and reference files
         curated_msa="results/{segment}/{subtype}/curated_msa.fasta.xz",
@@ -231,7 +246,8 @@ rule curate_and_extract_coding_seqs:
 rule randomize_alignment:
     conda: "envs/python.yaml"
     input:
-        curated_msa="results/{segment}/{subtype}/curated_msa.fasta.xz"
+        curated_msa="results/{segment}/{subtype}/curated_msa.fasta.xz",
+        script=script_deps("randomize_alignment.py")
     output:
         "results/{segment}/{subtype}/randomized_{n}/msa.fasta.xz"
     params:
@@ -420,7 +436,8 @@ rule reroot_tree:
 rule create_root_samples_file:
     conda: "envs/python.yaml"
     input:
-        ref="results/{segment}/{subtype}/curated_reference.fasta"
+        ref="results/{segment}/{subtype}/curated_reference.fasta",
+        script=script_deps("create_root_samples_file.py")
     output:
         "results/{segment}/{subtype}/root_samples.txt"
     params:
@@ -470,7 +487,8 @@ rule create_root_fasta:
     input:
         msa="results/{segment}/{subtype}/curated_msa.fasta.xz",
         ref="results/{segment}/{subtype}/curated_reference.fasta",
-        paths="results/{segment}/{subtype}/root_paths.txt"
+        paths="results/{segment}/{subtype}/root_paths.txt",
+        script=script_deps("extract_root_sequence.py")
     output:
         "results/{segment}/{subtype}/curated_root.fasta"
     params:
@@ -498,7 +516,8 @@ rule create_root_fasta:
 rule augment_metadata:
     conda: "envs/python.yaml"
     input:
-        metadata="results/combined_metadata.csv"
+        metadata="results/combined_metadata.csv",
+        script=script_deps("augment_metadata.py", "simplified_host_classifier.py")
     output:
         "results/combined_metadata_augmented.csv"
     log:
@@ -535,7 +554,8 @@ rule create_geographic_samples_file:
     input:
         curated_msa="results/{segment}/{subtype}/curated_msa.fasta.xz",
         metadata="results/combined_metadata_augmented.csv",
-        root="results/{segment}/{subtype}/curated_root.fasta"
+        root="results/{segment}/{subtype}/curated_root.fasta",
+        script=script_deps("create_samples_file.py")
     output:
         "results/{segment}/{subtype}/geographic_trees/{geo_group}_samples.txt"
     log:
@@ -612,7 +632,8 @@ rule extract_final_newick:
 rule prepare_host_annotation:
     conda: "envs/python.yaml"
     input:
-        metadata="results/combined_metadata_augmented.csv"
+        metadata="results/combined_metadata_augmented.csv",
+        script=script_deps("prepare_host_annotation.py")
     output:
         "results/host_annotation.csv"
     log:
@@ -657,7 +678,8 @@ rule infer_node_hosts:
 rule prepare_subtype_annotation:
     conda: "envs/python.yaml"
     input:
-        metadata="results/combined_metadata_augmented.csv"
+        metadata="results/combined_metadata_augmented.csv",
+        script=script_deps("prepare_subtype_annotation.py")
     output:
         "results/subtype_annotation.csv"
     log:

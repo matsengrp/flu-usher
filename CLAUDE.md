@@ -38,11 +38,15 @@ snakemake --cores 8 --use-conda results/HA/H5/geographic_trees/north_america_tre
 
 ### Workflow Control
 ```bash
-# Force rerun from a specific rule. --forcerun takes one-or-more arguments and
-# consumes everything up to the next flag, so put file targets BEFORE it --
-# `snakemake --forcerun <rule> <target>` silently treats <target> as another
-# rule to force and falls back to building `rule all`.
+# ALWAYS put file targets BEFORE these flags. --forcerun, --rerun-triggers,
+# --until, --omit-from and --allowed-rules all take nargs='+' and swallow every
+# following argument up to the next flag. `snakemake --forcerun <rule> <target>`
+# silently absorbs <target> as another rule name, leaving no positional target,
+# and falls back to building `rule all` -- which on interrupt deletes the
+# declared outputs of whatever was running. --rerun-triggers at least rejects
+# the target with "invalid choice"; --forcerun fails silently.
 snakemake --cores 8 --use-conda <target> --forcerun <rule_name>
+snakemake -n --use-conda <target> --rerun-triggers mtime
 
 # Generate workflow visualization
 snakemake --dag | dot -Tpdf > workflow.pdf
