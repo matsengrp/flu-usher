@@ -77,10 +77,16 @@ def main():
     filtered_sample_ids = set(filtered_df['isolate_id']) & msa_sample_ids
     logger.info(f"Of those, {len(filtered_sample_ids)} are present in curated MSA")
 
-    # Warn if no samples found beyond root
+    # Zero matches is an error, not a warning. Writing a root-only samples file
+    # makes matUtils extract and taxonium render a single-node "subtree" that
+    # Snakemake records as a successful build, so a misspelled --value or a
+    # group that vanished from the metadata is invisible until someone opens
+    # the visualization. The two validation failures above already exit(1).
     if len(filtered_sample_ids) == 0:
-        logger.warning(f"No samples found for {args.column}='{args.value}' in curated MSA")
-        logger.warning("Output will contain only the root sequence")
+        logger.error(f"No samples found for {args.column}='{args.value}' in curated MSA")
+        available = sorted(df[args.column].dropna().unique())
+        logger.error(f"Values present in column '{args.column}': {available[:20]}")
+        sys.exit(1)
 
     # Sort for reproducibility (excluding root which goes first)
     # Remove root from filtered_sample_ids to avoid writing it twice
