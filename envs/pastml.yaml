@@ -6,5 +6,5 @@ channels:
   - nodefaults
 
 dependencies:
-  - python=3.10
-  - pastml
+  - python =3.10
+  - pastml =1.9.51

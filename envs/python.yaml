@@ -6,12 +6,13 @@ channels:
   - nodefaults
 
 dependencies:
-  - python
-  - biopython
-  - pandas
-  - xlrd
-  - pyyaml
-  - numpy
+  # Pinned: these determine FASTA/CSV byte output and therefore tree input.
+  - python =3.14.4
+  - biopython =1.87
+  - pandas =3.0.2
+  - xlrd =2.0.2
+  - pyyaml =6.0.3
+  - numpy =2.4.3
   - matplotlib
   - seaborn
   - scipy

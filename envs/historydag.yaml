@@ -6,5 +6,7 @@ channels:
   - nodefaults
 
 dependencies:
+  # python is held at 3.10: historydag hits a closure bug under 3.12's
+  # changed comprehension scoping.
   - python =3.10
-  - historydag
+  - historydag =1.3.1

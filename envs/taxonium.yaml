@@ -7,4 +7,4 @@ channels:
 dependencies:
   - pip
   - pip:
-    - taxoniumtools
+    - taxoniumtools ==2.1.24
