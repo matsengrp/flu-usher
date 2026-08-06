@@ -2,6 +2,16 @@
 import glob
 configfile: "config.yaml"
 
+# Without these the default wildcard regex is `.+`, which matches `/`. A typo in
+# a target path then resolves against the wrong rule with a wildcard spanning
+# directory separators instead of failing.
+wildcard_constraints:
+    segment="[A-Za-z0-9]+",
+    subtype="[A-Za-z0-9]+",
+    n=r"\d+",
+    geo_group="[a-z_]+",
+    notebook="[A-Za-z0-9_]+",
+
 
 # Discover every GISAID FASTA + XLS file across the configured input dirs at
 # parse time so the md5 manifest rule can list them as explicit inputs and be
@@ -130,15 +140,18 @@ rule download_all_references:
                      subtype=config["na_subtypes"]) + \
               expand("results/{segment}/all/reference/pathogen.json",
                      segment=[s for s in config["segments"] if s not in ["HA", "NA"]])
+    input:
+        # Declared as an input, not just a params path: the accessions live in
+        # config.yaml, so editing one must re-trigger the download.
+        config_file="config.yaml"
     params:
-        config_file="config.yaml",
         wait_time=30
     log:
         "logs/download_all_references.log"
     shell:
         """
         python scripts/download_ref_seq.py \
-            --config {params.config_file} \
+            --config {input.config_file} \
             --output-base-dir results \
             --wait-time {params.wait_time} \
             &> {log}
