@@ -24,12 +24,11 @@ from curate_and_extract_coding_seqs import (
     slice_record,
     get_ambiguous_chars,
     analyze_record,
-    filter_sequences,
+    filter_and_yield_sequences,
     # Coding sequence extraction functions
     parse_insertions_from_tsv,
     remove_gaps,
     insert_nucleotides,
-    validate_against_raw_sequences,
     filter_insertions_for_cds,
     extract_cds_from_aligned,
     extract_gene_cds,
@@ -46,6 +45,24 @@ from utils import (
 # ============================================================================
 # TESTS FOR MSA CURATION FUNCTIONS
 # ============================================================================
+
+def filter_records(records, ambiguous_characters, max_frac_gaps, max_frac_ambig,
+                   filter_duplicates=False, replace_gaps_with_ref=False):
+    """
+    Collect filter_and_yield_sequences into a list.
+
+    The generator is what main() consumes; these tests assert on the whole
+    filtered set, so they need it materialised. This used to be a wrapper in
+    the production module, but nothing outside the tests called it.
+    """
+    return [
+        record
+        for record, _ in filter_and_yield_sequences(
+            records, ambiguous_characters, max_frac_gaps, max_frac_ambig,
+            filter_duplicates, replace_gaps_with_ref
+        )
+    ]
+
 
 class TestSliceRecord(unittest.TestCase):
     """Tests for slice_record function"""
@@ -171,8 +188,8 @@ class TestFilterSequences(unittest.TestCase):
         ]
         ambig_chars = set()
 
-        filtered = filter_sequences(records, ambig_chars, max_frac_gaps=0.05,
-                                   max_frac_ambig=0.01, logger=self.logger)
+        filtered = filter_records(records, ambig_chars, max_frac_gaps=0.05,
+                                  max_frac_ambig=0.01)
 
         self.assertEqual(len(filtered), 1)
         self.assertEqual(filtered[0].id, "seq1")
@@ -186,8 +203,8 @@ class TestFilterSequences(unittest.TestCase):
         ]
         ambig_chars = {'N'}
 
-        filtered = filter_sequences(records, ambig_chars, max_frac_gaps=0.05,
-                                   max_frac_ambig=0.01, logger=self.logger)
+        filtered = filter_records(records, ambig_chars, max_frac_gaps=0.05,
+                                  max_frac_ambig=0.01)
 
         self.assertEqual(len(filtered), 1)
         self.assertEqual(filtered[0].id, "seq1")
@@ -202,8 +219,8 @@ class TestFilterSequences(unittest.TestCase):
         ]
         ambig_chars = set()
 
-        filtered = filter_sequences(records, ambig_chars, max_frac_gaps=1.0,
-                                   max_frac_ambig=1.0, logger=self.logger)
+        filtered = filter_records(records, ambig_chars, max_frac_gaps=1.0,
+                                  max_frac_ambig=1.0)
 
         self.assertEqual(len(filtered), 2)
         self.assertEqual(filtered[0].id, "seq1")
@@ -216,8 +233,8 @@ class TestFilterSequences(unittest.TestCase):
         ]
         ambig_chars = {'R', 'Y', 'W'}
 
-        filtered = filter_sequences(records, ambig_chars, max_frac_gaps=1.0,
-                                   max_frac_ambig=1.0, logger=self.logger)
+        filtered = filter_records(records, ambig_chars, max_frac_gaps=1.0,
+                                  max_frac_ambig=1.0)
 
         self.assertEqual(len(filtered), 1)
         # R, Y, W should all be replaced with N
@@ -233,9 +250,9 @@ class TestFilterSequences(unittest.TestCase):
         ]
         ambig_chars = set()
 
-        filtered = filter_sequences(records, ambig_chars, max_frac_gaps=1.0,
-                                   max_frac_ambig=1.0, logger=self.logger,
-                                   filter_duplicates=True)
+        filtered = filter_records(records, ambig_chars, max_frac_gaps=1.0,
+                                  max_frac_ambig=1.0,
+                                  filter_duplicates=True)
 
         self.assertEqual(len(filtered), 2)
         self.assertEqual(filtered[0].id, "seq1")
@@ -250,9 +267,9 @@ class TestFilterSequences(unittest.TestCase):
         ]
         ambig_chars = set()
 
-        filtered = filter_sequences(records, ambig_chars, max_frac_gaps=1.0,
-                                   max_frac_ambig=1.0, logger=self.logger,
-                                   replace_gaps_with_ref=True)
+        filtered = filter_records(records, ambig_chars, max_frac_gaps=1.0,
+                                  max_frac_ambig=1.0,
+                                  replace_gaps_with_ref=True)
 
         self.assertEqual(len(filtered), 3)
         # Reference should be unchanged
@@ -623,81 +640,7 @@ class TestParseInsertionsFromTsv(unittest.TestCase):
                 os.unlink(f.name)
 
 
-class TestValidateAgainstRawSequences(unittest.TestCase):
-    """Tests for validate_against_raw_sequences function"""
-
-    def test_valid_substring(self):
-        """Test that unaligned sequence is substring of raw sequence"""
-        # Create test sequences
-        unaligned_records = [
-            SeqRecord(Seq("ACGTACGT"), id="seq1", description="seq1")
-        ]
-
-        with tempfile.NamedTemporaryFile(mode='wb', suffix='.fasta.xz', delete=False) as f:
-            with lzma.open(f.name, 'wt') as handle:
-                # Raw sequence contains the unaligned sequence
-                SeqIO.write([SeqRecord(Seq("TTTTACGTACGTGGGG"), id="seq1", description="seq1")], handle, 'fasta')
-
-            try:
-                num_validated, num_failed = validate_against_raw_sequences(unaligned_records, f.name)
-                self.assertEqual(num_validated, 1)
-                self.assertEqual(num_failed, 0)
-            finally:
-                os.unlink(f.name)
-
-    def test_invalid_not_substring(self):
-        """Test that validation fails when unaligned sequence is not substring"""
-        # Create test sequences
-        unaligned_records = [
-            SeqRecord(Seq("ACGTACGT"), id="seq1", description="seq1")
-        ]
-
-        with tempfile.NamedTemporaryFile(mode='wb', suffix='.fasta.xz', delete=False) as f:
-            with lzma.open(f.name, 'wt') as handle:
-                # Raw sequence does NOT contain the unaligned sequence
-                SeqIO.write([SeqRecord(Seq("TTTTGGGGCCCC"), id="seq1", description="seq1")], handle, 'fasta')
-
-            try:
-                num_validated, num_failed = validate_against_raw_sequences(unaligned_records, f.name)
-                self.assertEqual(num_validated, 0)
-                self.assertEqual(num_failed, 1)
-            finally:
-                os.unlink(f.name)
-
-    def test_case_insensitive(self):
-        """Test that validation is case-insensitive"""
-        # Create test sequences with mixed case
-        unaligned_records = [
-            SeqRecord(Seq("acgtACGT"), id="seq1", description="seq1")
-        ]
-
-        with tempfile.NamedTemporaryFile(mode='wb', suffix='.fasta.xz', delete=False) as f:
-            with lzma.open(f.name, 'wt') as handle:
-                # Raw sequence in different case
-                SeqIO.write([SeqRecord(Seq("TTTTacgtACGTGGGG"), id="seq1", description="seq1")], handle, 'fasta')
-
-            try:
-                num_validated, num_failed = validate_against_raw_sequences(unaligned_records, f.name)
-                self.assertEqual(num_validated, 1)
-                self.assertEqual(num_failed, 0)
-            finally:
-                os.unlink(f.name)
-
-
-# ============================================================================
-# TESTS FOR PER-GENE CDS EXTRACTION
-# ============================================================================
-#
-# These tests cover functions for extracting individual CDS per gene with
-# support for spliced genes and biological validation:
-# - group_cds_by_gene(): Group CDS features by gene/protein (in utils.py)
-# - filter_insertions_for_cds(): Filter insertions for specific CDS regions
-# - extract_cds_from_aligned(): Extract CDS from aligned sequences
-# - extract_gene_cds(): Complete gene CDS extraction with inline validation
-# - validate_cds(): CDS biological validation (frame, start codon, stop codon)
-# ============================================================================
-
-# Test data constants
+# Shared CDS fixtures used by the per-gene extraction and validation tests below.
 VALID_CDS_PERGENE = "ATGCGATCGTAA"  # 12 bp, starts with ATG, ends with TAA
 ALIGNED_CDS_WITH_GAPS_PERGENE = "ATG---CGATCG---TAA"  # 12 bp ungapped
 LONG_CDS_PERGENE = "ATGCGATCGAAACCGTTCGGTTGA"  # 24 bp
