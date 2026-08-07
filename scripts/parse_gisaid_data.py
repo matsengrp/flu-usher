@@ -230,9 +230,16 @@ def main():
     logger.info(f"  skipped: {total_skipped:,}")
     for reason in sorted(skipped):
         logger.info(f"    - {reason.replace('_', ' ')}: {skipped[reason]:,}")
+    # This cannot fire against the loop as currently written -- every `continue`
+    # increments exactly one `skipped` counter, and the only other path appends
+    # to segment_records -- so it is a guard against future drift, not a runtime
+    # condition. Kept because the failure it catches (a new `continue` added
+    # without a matching counter) is silent otherwise, and fatal rather than a
+    # warning so it matches the exit-nonzero posture of the checks below.
+    reconciliation_error = None
     if total_records_read != total_written + total_skipped:
-        logger.warning(
-            f"Accounting does not reconcile: {total_records_read:,} read but "
+        reconciliation_error = (
+            f"accounting does not reconcile: {total_records_read:,} read but "
             f"{total_written:,} written + {total_skipped:,} skipped"
         )
 
@@ -248,12 +255,13 @@ def main():
             "configured combinations produced no sequences: "
             + ", ".join(f"{seg}/{sub}" for seg, sub in missing)
         )
-    empty = sorted(c for c, n in written_counts.items() if n == 0)
-    if empty:
-        errors.append(
-            "configured combinations wrote zero records: "
-            + ", ".join(f"{seg}/{sub}" for seg, sub in empty)
-        )
+    # A "wrote zero records" check used to live here. It was unreachable:
+    # written_counts is populated only from segment_records, whose entries are
+    # created by the .append() above, so no entry can have length zero. A
+    # combination that produced nothing is absent entirely, which `missing`
+    # already catches.
+    if reconciliation_error:
+        errors.append(reconciliation_error)
     if errors:
         for err in errors:
             logger.error(err)

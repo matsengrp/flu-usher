@@ -1314,24 +1314,24 @@ class TestValidateCds(unittest.TestCase):
 
     def test_valid_cds_all_checks_pass(self):
         """Valid CDS with TAA stop codon"""
-        result = validate_cds(VALID_CDS_PERGENE, "HA", "seq1", self.stats)
+        result = validate_cds(VALID_CDS_PERGENE, "HA", self.stats)
         self.assertTrue(result)
 
     def test_valid_cds_with_tag_stop(self):
         """Valid CDS with TAG stop codon"""
         cds = "ATGCGATCGTAG"
-        result = validate_cds(cds, "HA", "seq1", self.stats)
+        result = validate_cds(cds, "HA", self.stats)
         self.assertTrue(result)
 
     def test_valid_cds_with_tga_stop(self):
         """Valid CDS with TGA stop codon"""
         cds = "ATGCGATCGTGA"
-        result = validate_cds(cds, "HA", "seq1", self.stats)
+        result = validate_cds(cds, "HA", self.stats)
         self.assertTrue(result)
 
     def test_invalid_frame_remainder_one(self):
         """CDS with length not divisible by 3 (remainder 1)"""
-        result = validate_cds(INVALID_FRAME_CDS_PERGENE, "HA", "seq1", self.stats)
+        result = validate_cds(INVALID_FRAME_CDS_PERGENE, "HA", self.stats)
 
         self.assertFalse(result)
         self.assertFailureRecorded("wrong_length")
@@ -1339,7 +1339,7 @@ class TestValidateCds(unittest.TestCase):
     def test_invalid_frame_remainder_two(self):
         """CDS with length not divisible by 3 (remainder 2)"""
         cds = "ATGCGATCGTAAGG"  # 14 bp
-        result = validate_cds(cds, "HA", "seq1", self.stats)
+        result = validate_cds(cds, "HA", self.stats)
 
         self.assertFalse(result)
         self.assertFailureRecorded("wrong_length")
@@ -1347,7 +1347,7 @@ class TestValidateCds(unittest.TestCase):
     def test_missing_start_codon(self):
         """CDS without ATG start codon"""
         cds = "TTGCGATCGTAA"
-        result = validate_cds(cds, "HA", "seq1", self.stats)
+        result = validate_cds(cds, "HA", self.stats)
 
         self.assertFalse(result)
         self.assertFailureRecorded("missing_start_codon")
@@ -1355,7 +1355,7 @@ class TestValidateCds(unittest.TestCase):
     def test_missing_stop_codon(self):
         """CDS without proper stop codon"""
         cds = "ATGCGATCGTTA"  # Ends with TTA, not a stop codon
-        result = validate_cds(cds, "HA", "seq1", self.stats)
+        result = validate_cds(cds, "HA", self.stats)
 
         self.assertFalse(result)
         self.assertFailureRecorded("missing_stop_codon")
@@ -1363,7 +1363,7 @@ class TestValidateCds(unittest.TestCase):
     def test_too_short_sequence(self):
         """CDS too short (only start codon)"""
         cds = "ATG"
-        result = validate_cds(cds, "HA", "seq1", self.stats)
+        result = validate_cds(cds, "HA", self.stats)
 
         self.assertFalse(result)
         self.assertFailureRecorded("too_short")
@@ -1371,13 +1371,13 @@ class TestValidateCds(unittest.TestCase):
     def test_case_insensitive_validation(self):
         """Validation should be case-insensitive"""
         cds = "atgcgatcgtaa"  # Lowercase
-        result = validate_cds(cds, "HA", "seq1", self.stats)
+        result = validate_cds(cds, "HA", self.stats)
         self.assertTrue(result)
 
     def test_empty_sequence(self):
         """Empty sequence should fail validation"""
         cds = ""
-        result = validate_cds(cds, "HA", "seq1", self.stats)
+        result = validate_cds(cds, "HA", self.stats)
 
         self.assertFalse(result)
         self.assertFailureRecorded("too_short")
@@ -1392,7 +1392,7 @@ class TestValidateCds(unittest.TestCase):
         self.stats['gene_validation_failures']['NA'] = {
             key: 0 for key in self.FAILURE_KEYS
         }
-        result = validate_cds(INVALID_FRAME_CDS_PERGENE, "HA", "test_seq", self.stats)
+        result = validate_cds(INVALID_FRAME_CDS_PERGENE, "HA", self.stats)
 
         self.assertFalse(result)
         self.assertFailureRecorded("wrong_length")

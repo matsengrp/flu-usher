@@ -494,7 +494,7 @@ def extract_gene_cds(aligned_seq, cds_fragments, insertions_list, seq_id, raw_se
     return complete_cds, all_fragments_valid
 
 
-def validate_cds(cds_seq, gene_name, seq_id, stats=None):
+def validate_cds(cds_seq, gene_name, stats=None):
     """
     Validate that CDS is biologically correct:
     1. Length is multiple of 3
@@ -504,7 +504,6 @@ def validate_cds(cds_seq, gene_name, seq_id, stats=None):
     Args:
         cds_seq: CDS sequence string
         gene_name: Gene name for tracking stats
-        seq_id: Sequence ID, retained for stats attribution
         stats: Statistics dictionary to update (optional). Failures are recorded
                here rather than logged per sequence; main() reports the
                aggregate once, under "Per-gene CDS validation failures".
@@ -701,7 +700,7 @@ def main():
             )
 
             # Validate biological correctness if fragments passed
-            if fragments_valid and validate_cds(cds_seq, gene_name, seq_id, stats):
+            if fragments_valid and validate_cds(cds_seq, gene_name, stats):
                 extracted_cds[gene_name] = cds_seq
             else:
                 all_genes_valid = False
