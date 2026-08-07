@@ -10,7 +10,6 @@ wildcard_constraints:
     subtype="[A-Za-z0-9]+",
     n=r"\d+",
     geo_group="[a-z_]+",
-    notebook="[A-Za-z0-9_]+",
 
 
 
@@ -106,10 +105,13 @@ rule all:
         # Per-node subtype inference for other segments (all subtypes combined)
         expand("results/{segment}/all/subtype_ancestral/combined_ancestral_states.tab",
                segment=[s for s in config["segments"] if s not in ["HA", "NA"]]),
-        # Executed analysis notebooks
-        "results/notebooks/analyze_metadata.done",
-        "results/notebooks/analyze_alignments.done",
-        "results/notebooks/analyze_dags.done",
+        # Executed analysis notebooks and the figures they produce
+        "results/notebooks/analyze_metadata.ipynb",
+        "results/notebooks/analyze_alignments.ipynb",
+        "results/notebooks/analyze_dags.ipynb",
+        expand("results/figures/{fig}.png",
+               fig=["alignment_filtering_stats", "leaves_per_tree",
+                    "frac_seqs_by_host", "delta_parsimony"]),
         # md5 manifest of all input GISAID data files
         "results/input_data_md5sums.txt"
 
@@ -749,32 +751,94 @@ rule infer_node_subtypes:
         """
 
 # Execute analysis notebooks and generate HTML reports
-rule execute_notebooks:
+# Every notebook waits on the whole pipeline before running.
+ALL_FINAL_TREES = (
+    expand("results/HA/{subtype}/final_tree.jsonl.gz", subtype=config["ha_subtypes"])
+    + expand("results/NA/{subtype}/final_tree.jsonl.gz", subtype=config["na_subtypes"])
+    + expand("results/{segment}/all/final_tree.jsonl.gz",
+             segment=[s for s in config["segments"] if s not in ["HA", "NA"]])
+)
+
+# The notebooks produce figures unevenly -- analyze_alignments 3, analyze_dags 1,
+# analyze_metadata 0 -- so a single {notebook} wildcard rule cannot declare them:
+# an output list cannot depend on the wildcard value. Hence one rule per
+# notebook, sharing the input list above.
+#
+# Each writes its executed copy to results/ instead of running --inplace over the
+# git-tracked source, which rewrote tracked files and churned output-cell diffs
+# on every run while declaring only a .done sentinel.
+
+rule execute_analyze_alignments:
     conda: "envs/python.yaml"
     input:
-        notebook="notebooks/{notebook}.ipynb",
-        # Ensure all main pipeline outputs are complete before running notebooks
+        notebook="notebooks/analyze_alignments.ipynb",
+        config_file="config.yaml",
         metadata="results/combined_metadata_augmented.csv",
-        ha_trees=expand("results/HA/{subtype}/final_tree.jsonl.gz",
-                       subtype=config["ha_subtypes"]),
-        na_trees=expand("results/NA/{subtype}/final_tree.jsonl.gz",
-                       subtype=config["na_subtypes"]),
-        other_trees=expand("results/{segment}/all/final_tree.jsonl.gz",
-                          segment=[s for s in config["segments"] if s not in ["HA", "NA"]])
+        trees=ALL_FINAL_TREES
     output:
-        "results/notebooks/{notebook}.done"
+        executed="results/notebooks/analyze_alignments.ipynb",
+        figures=expand("results/figures/{fig}.png",
+                       fig=["alignment_filtering_stats", "leaves_per_tree",
+                            "frac_seqs_by_host"])
     log:
-        "logs/notebooks/{notebook}.log"
+        "logs/notebooks/analyze_alignments.log"
+    shell:
+        """
+        mkdir -p results/notebooks results/figures
+        jupyter nbconvert --to notebook \
+            --execute \
+            --ExecutePreprocessor.timeout=600 \
+            --output-dir results/notebooks \
+            --output analyze_alignments.ipynb \
+            {input.notebook} \
+            &> {log}
+        """
+
+rule execute_analyze_dags:
+    conda: "envs/python.yaml"
+    input:
+        notebook="notebooks/analyze_dags.ipynb",
+        config_file="config.yaml",
+        metadata="results/combined_metadata_augmented.csv",
+        trees=ALL_FINAL_TREES
+    output:
+        executed="results/notebooks/analyze_dags.ipynb",
+        figure="results/figures/delta_parsimony.png"
+    log:
+        "logs/notebooks/analyze_dags.log"
+    shell:
+        """
+        mkdir -p results/notebooks results/figures
+        jupyter nbconvert --to notebook \
+            --execute \
+            --ExecutePreprocessor.timeout=600 \
+            --output-dir results/notebooks \
+            --output analyze_dags.ipynb \
+            {input.notebook} \
+            &> {log}
+        """
+
+rule execute_analyze_metadata:
+    conda: "envs/python.yaml"
+    input:
+        notebook="notebooks/analyze_metadata.ipynb",
+        config_file="config.yaml",
+        metadata="results/combined_metadata_augmented.csv",
+        trees=ALL_FINAL_TREES
+    output:
+        executed="results/notebooks/analyze_metadata.ipynb"
+    log:
+        "logs/notebooks/analyze_metadata.log"
     shell:
         """
         mkdir -p results/notebooks
         jupyter nbconvert --to notebook \
             --execute \
-            --inplace \
             --ExecutePreprocessor.timeout=600 \
+            --output-dir results/notebooks \
+            --output analyze_metadata.ipynb \
             {input.notebook} \
             &> {log}
-        touch {output}
         """
 
 # Record md5 sums of every input GISAID FASTA / XLS file as a provenance
