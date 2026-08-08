@@ -105,6 +105,14 @@ rule all:
         # Per-node subtype inference for other segments (all subtypes combined)
         expand("results/{segment}/all/subtype_ancestral/combined_ancestral_states.tab",
                segment=[s for s in config["segments"] if s not in ["HA", "NA"]]),
+        # Sequence-identity check across rerooting (issue #49) -- fails the run
+        # if any sample's sequence changed when the tree was rerooted
+        expand("results/HA/{subtype}/reroot_sequence_check.txt",
+               subtype=config["ha_subtypes"]),
+        expand("results/NA/{subtype}/reroot_sequence_check.txt",
+               subtype=config["na_subtypes"]),
+        expand("results/{segment}/all/reroot_sequence_check.txt",
+               segment=[s for s in config["segments"] if s not in ["HA", "NA"]]),
         # Executed analysis notebooks and the figures they produce
         "results/notebooks/analyze_metadata.ipynb",
         "results/notebooks/analyze_alignments.ipynb",
@@ -440,28 +448,124 @@ rule create_mat_protobuf:
         matOptimize -t {input.nh_file} -v {input.vcf_file} -o {output.protobuf_name} -N 0 &> {log}
         """
 
-# Reroot the tree if specified in config, otherwise create symlink
-rule reroot_tree:
+def reroot_target(wildcards):
+    """Configured reroot target for a combination, or "" if it is not rerooted."""
+    return config.get("reroot", {}).get(f"{wildcards.segment}_{wildcards.subtype}", "")
+
+
+def final_mat_source(wildcards):
+    """Tree that create_final_mat turns into final_tree.pb.gz.
+
+    Rerooted combinations rebuild the MAT from the rerooted newick; the rest
+    symlink the sampled MAT through unchanged, exactly as before.
+    """
+    base = f"results/{wildcards.segment}/{wildcards.subtype}"
+    if reroot_target(wildcards):
+        return f"{base}/rerooted_tree.nh"
+    return f"{base}/sampled_tree.pb.gz"
+
+
+# Reroot in newick space rather than with `matUtils extract -y`. That flag
+# rebases the MAT into the new root's coordinate frame: the new root is written
+# with zero mutations, so the file stops recording how it differs from the
+# reference. That is self-consistent and readable if you know the new root's
+# sequence, but it refuses outright when the existing root carries mutations
+# (which broke HA/H3), and the frame shift is implicit -- nothing records it.
+# See issue #49. Rerooting the topology here leaves mutation assignment to
+# matOptimize below, which reads it off the alignment, keeping the MAT in the
+# reference's frame.
+rule reroot_newick:
+    conda: "envs/ete3.yaml"
+    input:
+        newick="results/{segment}/{subtype}/sampled_tree.nh",
+        config="config.yaml",
+        script=script_deps("reroot_newick.py")
+    output:
+        "results/{segment}/{subtype}/rerooted_tree.nh"
+    params:
+        new_root=reroot_target
+    log:
+        "logs/{segment}/{subtype}/reroot_newick.log"
+    shell:
+        """
+        python scripts/reroot_newick.py \
+            --input {input.newick} \
+            --output {output} \
+            --root {params.new_root} \
+            &> {log}
+        """
+
+
+# Build the final MAT, rerooted where configured and passed through otherwise.
+rule create_final_mat:
     conda: "envs/usher.yaml"
     input:
-        "results/{segment}/{subtype}/sampled_tree.pb.gz"
+        tree=final_mat_source,
+        vcf="results/{segment}/{subtype}/randomized_0/msa.vcf",
+        config="config.yaml"
     output:
         "results/{segment}/{subtype}/final_tree.pb.gz"
     params:
-        new_root=lambda wildcards: config.get("reroot", {}).get(f"{wildcards.segment}_{wildcards.subtype}", "")
+        new_root=reroot_target
     log:
         "logs/{segment}/{subtype}/reroot.log"
     shell:
         """
         if [ -n "{params.new_root}" ]; then
-            matUtils extract -i {input} \
-                -o {output} \
-                -y {params.new_root} \
-                &> {log}
+            matOptimize -t {input.tree} -v {input.vcf} -o {output} -N 0 &> {log}
         else
-            ln -sf $(basename {input}) {output} \
+            ln -sf $(basename {input.tree}) {output} \
             && echo "Created symlink (no rerooting specified)" > {log}
         fi
+        """
+
+
+# Standing guard against the class of bug in #49: rerooting is a pure
+# re-representation, so every sequence the tree implies must survive it
+# unchanged. Runs for every combination, including the two that are not
+# rerooted, where it is a cheap tautology.
+rule extract_tree_sequence_paths:
+    conda: "envs/usher.yaml"
+    input:
+        sampled="results/{segment}/{subtype}/sampled_tree.pb.gz",
+        final="results/{segment}/{subtype}/final_tree.pb.gz"
+    output:
+        sampled=temp("results/{segment}/{subtype}/seqcheck/sampled_paths.tsv"),
+        final=temp("results/{segment}/{subtype}/seqcheck/final_paths.tsv")
+    log:
+        "logs/{segment}/{subtype}/extract_sequence_paths.log"
+    shell:
+        # matUtils prepends -d to the -S path even when it is absolute, and then
+        # silently writes nothing, so -S must stay a bare filename.
+        """
+        matUtils extract -i {input.sampled} \
+            -d $(dirname {output.sampled}) -S $(basename {output.sampled}) &> {log}
+        matUtils extract -i {input.final} \
+            -d $(dirname {output.final}) -S $(basename {output.final}) &>> {log}
+        """
+
+
+rule check_tree_sequences:
+    conda: "envs/python.yaml"
+    input:
+        sampled_paths="results/{segment}/{subtype}/seqcheck/sampled_paths.tsv",
+        final_paths="results/{segment}/{subtype}/seqcheck/final_paths.tsv",
+        reference="results/{segment}/{subtype}/curated_reference.fasta",
+        vcf="results/{segment}/{subtype}/randomized_0/msa.vcf",
+        script=script_deps("check_tree_sequences.py")
+    output:
+        "results/{segment}/{subtype}/reroot_sequence_check.txt"
+    log:
+        "logs/{segment}/{subtype}/check_tree_sequences.log"
+    shell:
+        """
+        python scripts/check_tree_sequences.py \
+            --sampled-paths {input.sampled_paths} \
+            --final-paths {input.final_paths} \
+            --reference {input.reference} \
+            --input-vcf {input.vcf} \
+            --output {output} \
+            &> {log}
         """
 
 # Extract root sequence from tree mutations or create symlink to reference
