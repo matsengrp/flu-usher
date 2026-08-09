@@ -6,3 +6,7 @@ sbatch*
 run.sbatch
 scripts/__pycache__/
 .claude
+
+# matOptimize writes these into the working directory, not into its -o target
+changed_nodes
+optimization_log/

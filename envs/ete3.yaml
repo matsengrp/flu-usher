@@ -1,0 +1,18 @@
+name: ete3
+
+channels:
+  - https://prefix.dev/conda-forge
+  - nodefaults
+
+dependencies:
+  # Isolated from envs/historydag.yaml on purpose. ete3 is already present there
+  # as an undeclared transitive dependency, but adding it explicitly would change
+  # that env's hash and re-invalidate trim_dag and create_newick -- re-deriving
+  # all 16 trees rather than the 14 this fix touches. Adding it to
+  # envs/python.yaml would invalidate parse_gisaid_data and re-run everything.
+  # A separate env changes no existing hash.
+  #
+  # Pinned: set_outgroup determines the rooted topology handed to matOptimize,
+  # so an ete3 bump can change every rerooted tree.
+  - python =3.10
+  - ete3 =3.1.3
