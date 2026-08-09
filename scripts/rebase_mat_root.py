@@ -30,26 +30,13 @@ import argparse
 import gzip
 import sys
 
-from utils import setup_logging
+from utils import read_reference, setup_logging
 
 logger = setup_logging(__name__)
 
 # usher encodes nucleotides as indices into this string, verified against the
 # mutation paths matUtils writes (position 33 ref_nuc=0 mut_nuc=3 is "A33T").
 NUCLEOTIDES = "ACGT"
-
-
-def read_reference(path):
-    """Return the single sequence in a FASTA file, uppercased."""
-    parts = []
-    with open(path) as handle:
-        for line in handle:
-            if line.startswith(">"):
-                if parts:
-                    break
-                continue
-            parts.append(line.strip())
-    return "".join(parts).upper()
 
 
 def _schema():

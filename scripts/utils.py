@@ -27,6 +27,62 @@ def setup_logging(name=None):
     return logging.getLogger(name if name is not None else __name__)
 
 
+def parse_mutation(token):
+    """Split a matUtils mutation token into (parent base, position, new base).
+
+    Tokens look like "A33T": the base in the parent, a 1-based position, and
+    the base in this node. Note the first character is the *parent's* base, not
+    the reference's -- they coincide only for mutations on the root.
+
+    Raises ValueError rather than returning something wrong, because the two
+    callers used to slice this format by hand and disagreed about how much to
+    check; that format has already produced one production bug (issue #49).
+    """
+    if len(token) < 3:
+        raise ValueError(f"malformed mutation token {token!r}: too short")
+    parent, position, mutant = token[0], token[1:-1], token[-1]
+    if not position.isdigit():
+        raise ValueError(f"malformed mutation token {token!r}: bad position")
+    # IUPAC codes and gaps are permitted; digits are not, since that would mean
+    # the position slice took a character it should not have.
+    for base in (parent, mutant):
+        if not (base.isalpha() or base == '-'):
+            raise ValueError(f"malformed mutation token {token!r}: bad base {base!r}")
+    return parent, int(position), mutant
+
+
+def iter_path_mutations(path_field):
+    """Yield (parent base, position, new base) from a `matUtils extract -S` path.
+
+    The field is space-separated `node:MUT,MUT` chunks in root-to-tip order.
+    Mutations come out in that order, so a later one at the same position
+    supersedes an earlier one, and a mutation followed by its back-mutation
+    cancels.
+    """
+    for chunk in path_field.split():
+        _, _, mutations = chunk.partition(":")
+        for token in mutations.split(","):
+            if token:
+                yield parse_mutation(token)
+
+
+def read_reference(path):
+    """Return the first sequence in a FASTA file as one uppercased string.
+
+    Deliberately not Bio.SeqIO: this is called from rules whose environments
+    carry no biopython, and the inputs are single-record reference FASTAs.
+    """
+    parts = []
+    with open(path) as handle:
+        for line in handle:
+            if line.startswith(">"):
+                if parts:
+                    break
+                continue
+            parts.append(line.strip())
+    return "".join(parts).upper()
+
+
 def open_sequence_file(path, mode='rt'):
     """
     Open a possibly-compressed sequence file in text mode.

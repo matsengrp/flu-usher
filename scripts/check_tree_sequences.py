@@ -45,22 +45,14 @@ cannot quietly hollow out the check.
 import argparse
 import sys
 
-from utils import setup_logging
+from utils import iter_path_mutations, read_reference, setup_logging
 
 logger = setup_logging(__name__)
 
 
-def read_reference(path):
+def reference_positions(path):
     """Return {1-based position: base} for the single record in a FASTA file."""
-    seq = []
-    with open(path) as handle:
-        for line in handle:
-            if line.startswith(">"):
-                if seq:
-                    break
-                continue
-            seq.append(line.strip())
-    return {i: base.upper() for i, base in enumerate("".join(seq), start=1)}
+    return {i: base for i, base in enumerate(read_reference(path), start=1)}
 
 
 def compose(path_field, ref, origin_diff=None):
@@ -78,13 +70,8 @@ def compose(path_field, ref, origin_diff=None):
     `ref` and stay comparable. Empty for a tree already on the reference.
     """
     alleles = {}
-    for chunk in path_field.split():
-        _, _, muts = chunk.partition(":")
-        for mut in muts.split(","):
-            if not mut:
-                continue
-            pos = int(mut[1:-1])
-            alleles[pos] = mut[-1]
+    for _, position, mutant in iter_path_mutations(path_field):
+        alleles[position] = mutant
     if origin_diff:
         # Positions where the origin already differs from ref and the path says
         # nothing: the sample inherits the origin's base, which is a difference.
@@ -215,7 +202,7 @@ def main():
             sys.exit(1)
         logger.info(f"Final tree is rooted at '{args.expect_root}'")
 
-    ref = read_reference(args.reference)
+    ref = reference_positions(args.reference)
 
     # The final tree may have been rebased onto its own root, in which case its
     # mutations are recorded against that sequence rather than the reference.
@@ -223,7 +210,7 @@ def main():
     # the whole reason rebasing is bookkeeping rather than a change of content.
     final_origin_diff = {}
     if args.final_origin:
-        origin = read_reference(args.final_origin)
+        origin = reference_positions(args.final_origin)
         if len(origin) != len(ref):
             logger.error(
                 f"final origin spans {len(origin)} positions, reference "

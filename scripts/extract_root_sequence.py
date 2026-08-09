@@ -2,10 +2,12 @@
 Extract and infer root sequence from tree mutation paths with validation against MSA.
 """
 import argparse
+import sys
+
 from Bio import SeqIO
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
-from utils import open_sequence_file, setup_logging
+from utils import open_sequence_file, parse_mutation, setup_logging
 
 logger = setup_logging(__name__)
 
@@ -37,18 +39,30 @@ def parse_mutation_path(paths_file, new_root_name):
 
 
 def apply_mutations(reference_seq, mutations):
-    """Apply mutations to reference sequence."""
+    """Apply a root-to-tip mutation path to the reference, 1-based positions.
+
+    A parent-base mismatch means the path and the reference are not the pair we
+    think they are, so the sequence this builds would be wrong. It used to warn
+    and carry on; validate_sequences() would then fail further downstream on
+    the consequence rather than the cause. Fail here instead, matching
+    rebase_mat_root.root_sequence(), which does the same job from the protobuf.
+    """
     seq = list(str(reference_seq))
-    for mut in mutations:
-        orig_base = mut[0]
-        new_base = mut[-1]
-        pos = int(mut[1:-1]) - 1  # Convert to 0-based
-
-        # Validate original base matches
-        if seq[pos] != orig_base:
-            logger.warning(f"Expected {orig_base} at position {pos+1}, found {seq[pos]}")
-
-        seq[pos] = new_base
+    for token in mutations:
+        parent, position, mutant = parse_mutation(token)
+        index = position - 1
+        if not 0 <= index < len(seq):
+            logger.error(
+                f"mutation {token} is outside the {len(seq)}-base reference"
+            )
+            sys.exit(1)
+        if seq[index] != parent:
+            logger.error(
+                f"mutation {token} expects {parent} at position {position}, "
+                f"but the reference has {seq[index]}"
+            )
+            sys.exit(1)
+        seq[index] = mutant
     return ''.join(seq)
 
 
