@@ -49,18 +49,22 @@ snakemake --cores 8 --use-conda <target> --forcerun <rule_name>
 
 # `--rerun-triggers mtime` narrows the default trigger set (mtime, params,
 # input, software-env, code) down to mtime alone, which disables params-based
-# invalidation. No rule declares config.yaml as an input any more, so under
-# mtime-only a config edit invalidates NOTHING and every affected output goes
-# quietly stale. Use it for a quick dry run, not to decide whether real work is
-# up to date.
+# invalidation. Only execute_analyze_alignments and execute_analyze_dags still
+# declare config.yaml as an input -- their notebooks open it directly, which
+# nothing but an mtime dependency can track -- so under mtime-only a config
+# edit re-runs those two and nothing else, and every substantive output goes
+# quietly stale. Measured: a reroot edit under mtime-only schedules 3 jobs.
+# Use it for a quick dry run, not to decide whether real work is up to date.
 #
 # Under the default triggers, config invalidation is precise: each rule names
 # the config values it consumes in `params:`, so editing a reroot target
 # re-runs the reroot rules and leaves the alignments alone. It did not used to
 # be -- download_all_references took config.yaml as an input at the head of the
 # DAG, so any edit re-downloaded the references and cascaded through
-# everything. Measured before that change: one reroot target re-ran 1235 of
-# 1235 jobs, identically with and without the params trigger.
+# everything. Measured before that change: one reroot target re-ran 1235 of the
+# DAG's 1240 jobs, identically with and without the params trigger. (The five
+# spared are parse_gisaid_data, augment_metadata, the two annotation rules and
+# input_data_md5sums -- everything expensive re-derived.)
 snakemake -n --use-conda <target> --rerun-triggers mtime
 
 # Generate workflow visualization

@@ -119,14 +119,26 @@ def root_children(newick):
     the rule.
 
     Scanning for delimiters like this would mis-parse a label containing '(',
-    ')' or ':'. No such label reaches here, and that is enforced rather than
-    assumed: sanitize_id() in utils.py strips [ ] ( ) : ; , ' . from every
-    sequence ID, and curate_and_extract_coding_seqs.py applies it upstream of
-    everything that becomes a leaf; internal names are internal_<id> from
-    convert_DAG_protobuf_to_newick_samples.py. Checked against the shipped
-    trees: 0 of 84,664 labels in HA/H7 and NA/N1 contain any of them. Newick
-    comments in [...] are likewise not handled, and matUtils does not emit
-    them. Anything feeding this an arbitrary newick needs a real parser.
+    ')' or ':'. No such label reaches here, from any of the three sources of
+    names in a matUtils newick:
+
+    - Leaves are sequence IDs, and sanitize_id() in utils.py strips
+      [ ] ( ) : ; , ' . from every one of them; curate_and_extract_coding_seqs
+      applies it upstream of everything that becomes a leaf. Enforced, not
+      assumed.
+    - Internal nodes are named node_N by matUtils itself, not by anything in
+      this repo. (The internal_<id> names that
+      convert_DAG_protobuf_to_newick_samples writes appear in sampled_tree.nh
+      and rerooted_tree.nh, which this function never reads.)
+    - Condensed nodes are node_N_condensed_M_leaves, written by usher -- 529 of
+      them across 15 of the 16 shipped trees. These bypass sanitize_id
+      entirely; they are safe because usher composes them from digits and
+      underscores, not because anything strips them.
+
+    Checked against the shipped trees: 0 risky characters in 113,434 labels
+    across HA/H7 and NA/N1, of which 84,664 are leaves. Newick comments in
+    [...] are likewise not handled, and matUtils does not emit them. Anything
+    feeding this an arbitrary newick needs a real parser.
     """
     text = newick.strip()
     end = text.rfind(")")

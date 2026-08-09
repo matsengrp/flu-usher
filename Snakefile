@@ -363,11 +363,18 @@ rule optimize_tree:
 # Convert optimized trees to DAGs
 # larch has no `conda:` directive, and snakemake --lint flags both rules for it.
 # That is accepted, not an oversight: larch is built from source into the main
-# flu-usher environment (environment.yml carries its build and runtime deps, not
-# larch itself), currently v0.1.3, built 2025-10-27. envs/larch.yaml used to sit
-# here pointing at the packaged larch-phylo, which is only 0.1.0 -- adopting it
-# would have silently downgraded the tree builder, so it was deleted rather than
-# wired up. Packaging larch properly is a separate change that has to be
+# flu-usher environment (environment.yml carries its build and runtime deps,
+# not larch itself), from commit 0ac4146, built 2025-10-27.
+#
+# envs/larch.yaml used to sit here pointing at the packaged larch-phylo, and was
+# deleted rather than wired up. Note the package's "0.1.0" version string is a
+# stale VERSION-file fallback -- conda-build strips .git, so its `git describe`
+# never runs -- not a lower release: it is built from c2e75a2, which is the
+# v0.1.3 tag. The real gap is the 5 commits from there to 0ac4146, and adopting
+# it would not have degraded anything quietly, it would have broken outright:
+# fb1bb78 is what added VCF support to larch-dagutil, so the packaged binary has
+# no -v option and larch_merge below passes one. It also pins python_abi 3.8 and
+# boost-cpp 1.76. Packaging larch properly is a separate change that has to be
 # validated against the trees it produces.
 rule tree_to_dag:
     input:

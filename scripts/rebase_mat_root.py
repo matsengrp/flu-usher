@@ -85,9 +85,11 @@ def root_branch_length(newick):
     makes it useful for checking that node_mutations[0] really is the root.
 
     Like zero_root_branch_length() below, this finds the root by scanning for
-    the last ')', which a label containing parens or colons would defeat.
-    Those characters cannot appear: sanitize_id() strips them upstream (see
-    check_tree_sequences.root_children for the full argument).
+    the last ')', which a label containing parens or colons would defeat. They
+    cannot appear here -- note this reads mat.newick from inside the protobuf,
+    where internal nodes are unnamed and only leaves and usher's condensed
+    nodes carry labels. See check_tree_sequences.root_children for the full
+    argument over all three sources of names.
     """
     text = newick.rstrip().rstrip(";")
     close = text.rfind(")")
