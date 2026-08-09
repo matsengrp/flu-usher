@@ -2,17 +2,53 @@
 Utility functions shared across flu-usher pipeline scripts.
 """
 
+import gzip
 import logging
+import lzma
 import re
 
 
-def setup_logging():
-    """Set up logging configuration"""
+def setup_logging(name=None):
+    """
+    Set up logging configuration
+
+    Args:
+        name: Logger name, conventionally the caller's __name__. Defaults to
+              this module's name, which is what callers that predate the
+              argument get.
+
+    Returns:
+        logging.Logger: Configured logger
+    """
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s - %(levelname)s - %(message)s'
     )
-    return logging.getLogger(__name__)
+    return logging.getLogger(name if name is not None else __name__)
+
+
+def open_sequence_file(path, mode='rt'):
+    """
+    Open a possibly-compressed sequence file in text mode.
+
+    Compression is selected from the file extension, so the same call site
+    serves plain, gzip- and xz-compressed paths. Pipeline sequence files are
+    xz-compressed; gzip is supported because some inputs arrive that way.
+
+    Args:
+        path: Path to the file
+        mode: Text-mode flag, 'rt' to read or 'wt' to write
+
+    Returns:
+        An open text-mode file handle. Use as a context manager.
+    """
+    path = str(path)
+    if path.endswith('.gz'):
+        return gzip.open(path, mode)
+    if path.endswith('.xz'):
+        return lzma.open(path, mode)
+    # Plain files take the single-letter text mode: 'rt' -> 'r', 'wt' -> 'w'.
+    return open(path, mode[0])
 
 
 def sanitize_id(seq_id):

@@ -6,4 +6,4 @@ channels:
   - nodefaults
 
 dependencies:
-  - usher
+  - usher =0.6.6

@@ -8,6 +8,9 @@ import argparse
 import re
 
 import pandas as pd
+from utils import setup_logging
+
+logger = setup_logging(__name__)
 
 
 _SUBTYPE_RE = re.compile(r"(H\d+N\d+)")
@@ -37,9 +40,8 @@ def main():
     df = pd.read_csv(args.input, usecols=["isolate_id", "subtype"])
     df["subtype"] = df["subtype"].apply(normalize_subtype)
     df.to_csv(args.output, index=False)
-    print(f"Wrote {len(df)} rows to {args.output}")
-    print("Subtype distribution (top 10):")
-    print(df["subtype"].value_counts().head(10).to_string())
+    logger.info(f"Wrote {len(df)} rows to {args.output}")
+    logger.info("Subtype distribution (top 10):\n" + df["subtype"].value_counts().head(10).to_string())
 
 
 if __name__ == "__main__":

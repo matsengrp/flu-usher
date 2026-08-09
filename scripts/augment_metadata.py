@@ -10,6 +10,9 @@ from datetime import datetime
 import pandas as pd
 
 from simplified_host_classifier import get_simplified_host_group
+from utils import setup_logging
+
+logger = setup_logging(__name__)
 
 
 def get_geographic_group(location):
@@ -76,29 +79,26 @@ def main():
     args = parser.parse_args()
 
     df = pd.read_csv(args.input)
-    print(f"Read {len(df)} records from {args.input}")
+    logger.info(f"Read {len(df)} records from {args.input}")
 
     # Host group
     df["host_group"] = df["host"].apply(get_simplified_host_group)
-    print(f"\nHost group distribution:")
-    print(df["host_group"].value_counts().to_string())
+    logger.info("Host group distribution:\n" + df["host_group"].value_counts().to_string())
 
     # Geographic group
     df["geographic_group"] = df["location"].apply(get_geographic_group)
-    print(f"\nGeographic group distribution:")
-    print(df["geographic_group"].value_counts().to_string())
+    logger.info("Geographic group distribution:\n" + df["geographic_group"].value_counts().to_string())
 
     # Temporal group
     median_date = compute_global_median_date(df["collection_date"])
-    print(f"\nGlobal median collection date: {median_date.date()}")
+    logger.info(f"Global median collection date: {median_date.date()}")
     df["temporal_group"] = df["collection_date"].apply(
         lambda d: get_temporal_group(d, median_date)
     )
-    print(f"\nTemporal group distribution:")
-    print(df["temporal_group"].value_counts().to_string())
+    logger.info("Temporal group distribution:\n" + df["temporal_group"].value_counts().to_string())
 
     df.to_csv(args.output, index=False)
-    print(f"\nWrote augmented metadata to {args.output}")
+    logger.info(f"Wrote augmented metadata to {args.output}")
 
 
 if __name__ == "__main__":

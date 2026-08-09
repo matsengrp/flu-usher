@@ -5,8 +5,9 @@ Randomize the order of sequences in an alignment, keeping the first sequence (re
 import argparse
 import random
 from Bio import SeqIO
-import gzip
-import lzma
+from utils import open_sequence_file, setup_logging
+
+logger = setup_logging(__name__)
 
 
 def randomize_alignment(input_file, output_file, seed=None):
@@ -23,21 +24,12 @@ def randomize_alignment(input_file, output_file, seed=None):
     
     # Read all sequences
     sequences = []
-    
-    # Handle different compression formats
-    if input_file.endswith('.gz'):
-        handle = gzip.open(input_file, 'rt')
-    elif input_file.endswith('.xz'):
-        handle = lzma.open(input_file, 'rt')
-    else:
-        handle = open(input_file, 'r')
-    
-    try:
+
+    with open_sequence_file(input_file, 'rt') as handle:
         for record in SeqIO.parse(handle, "fasta"):
             sequences.append(record)
-    finally:
-        handle.close()
-    
+
+
     if len(sequences) < 2:
         raise ValueError("Alignment must contain at least 2 sequences")
     
@@ -52,20 +44,11 @@ def randomize_alignment(input_file, output_file, seed=None):
     randomized_sequences = [reference] + other_sequences
     
     # Write output
-    if output_file.endswith('.gz'):
-        handle = gzip.open(output_file, 'wt')
-    elif output_file.endswith('.xz'):
-        handle = lzma.open(output_file, 'wt')
-    else:
-        handle = open(output_file, 'w')
-    
-    try:
+    with open_sequence_file(output_file, 'wt') as handle:
         SeqIO.write(randomized_sequences, handle, "fasta")
-    finally:
-        handle.close()
-    
-    print(f"Randomized {len(other_sequences)} sequences (keeping reference at top)")
-    print(f"Random seed: {seed}")
+
+    logger.info(f"Randomized {len(other_sequences)} sequences (keeping reference at top)")
+    logger.info(f"Random seed: {seed}")
 
 
 def main():

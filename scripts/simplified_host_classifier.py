@@ -4,6 +4,9 @@ Simplified host group classifier - collapses host categories into: human, swine,
 
 import pandas as pd
 import argparse
+from utils import setup_logging
+
+logger = setup_logging(__name__)
 
 def get_simplified_host_group(host):
     if pd.isna(host):
@@ -123,9 +126,8 @@ def main():
     # Save the result
     df.to_csv(args.output, index=False)
 
-    print(f"Added host_group column to {len(df)} records")
-    print(f"Host group distribution:")
-    print(df['host_group'].value_counts())
+    logger.info(f"Added host_group column to {len(df)} records")
+    logger.info("Host group distribution:\n" + df['host_group'].value_counts().to_string())
 
 if __name__ == "__main__":
     main()

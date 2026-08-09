@@ -3,6 +3,9 @@ Create a samples file for matUtils extract with reference and new root names.
 """
 import argparse
 from Bio import SeqIO
+from utils import setup_logging
+
+logger = setup_logging(__name__)
 
 def main():
     parser = argparse.ArgumentParser()
@@ -20,7 +23,7 @@ def main():
         f.write(f"{ref_name}\n")
         f.write(f"{args.new_root}\n")
 
-    print(f"Created samples file with reference '{ref_name}' and new root '{args.new_root}'")
+    logger.info(f"Created samples file with reference '{ref_name}' and new root '{args.new_root}'")
 
 if __name__ == "__main__":
     main()

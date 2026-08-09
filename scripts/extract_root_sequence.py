@@ -2,15 +2,17 @@
 Extract and infer root sequence from tree mutation paths with validation against MSA.
 """
 import argparse
-import lzma
 from Bio import SeqIO
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
+from utils import open_sequence_file, setup_logging
+
+logger = setup_logging(__name__)
 
 
 def extract_sequence_from_msa(msa_file, sequence_name):
     """Extract a specific sequence from a compressed MSA file by sequence name."""
-    with lzma.open(msa_file, 'rt') as f:
+    with open_sequence_file(msa_file, 'rt') as f:
         for record in SeqIO.parse(f, 'fasta'):
             if record.id == sequence_name:
                 return str(record.seq)
@@ -44,7 +46,7 @@ def apply_mutations(reference_seq, mutations):
 
         # Validate original base matches
         if seq[pos] != orig_base:
-            print(f"Warning: Expected {orig_base} at position {pos+1}, found {seq[pos]}")
+            logger.warning(f"Expected {orig_base} at position {pos+1}, found {seq[pos]}")
 
         seq[pos] = new_base
     return ''.join(seq)
@@ -73,7 +75,7 @@ def validate_sequences(msa_seq, inferred_seq):
         error_msg = "\n".join(mismatches)
         raise ValueError(f"Validation failed with {len(mismatches)} mismatches:\n{error_msg}")
 
-    print(f"✓ Validation passed: Inferred sequence matches MSA except at {gap_fills} gap positions")
+    logger.info(f"Validation passed: Inferred sequence matches MSA except at {gap_fills} gap positions")
 
 
 def main():
@@ -90,19 +92,19 @@ def main():
     # Read reference sequence
     with open(args.reference) as f:
         ref_record = next(SeqIO.parse(f, 'fasta'))
-    print(f"Loaded reference sequence: {ref_record.id} ({len(ref_record.seq)} bp)")
+    logger.info(f"Loaded reference sequence: {ref_record.id} ({len(ref_record.seq)} bp)")
 
     # Parse mutation path for new root
     mutations = parse_mutation_path(args.paths, args.new_root_name)
-    print(f"Found {len(mutations)} mutations along path to {args.new_root_name}")
+    logger.info(f"Found {len(mutations)} mutations along path to {args.new_root_name}")
 
     # Apply mutations to reference sequence
     inferred_seq = apply_mutations(ref_record.seq, mutations)
-    print(f"Applied mutations to generate inferred root sequence ({len(inferred_seq)} bp)")
+    logger.info(f"Applied mutations to generate inferred root sequence ({len(inferred_seq)} bp)")
 
     # Extract MSA sequence for validation
     msa_seq = extract_sequence_from_msa(args.msa, args.new_root_name)
-    print(f"Extracted MSA sequence: {args.new_root_name} ({len(msa_seq)} bp)")
+    logger.info(f"Extracted MSA sequence: {args.new_root_name} ({len(msa_seq)} bp)")
 
     # Validate inferred sequence against MSA
     validate_sequences(msa_seq, inferred_seq)
@@ -115,7 +117,7 @@ def main():
     )
     with open(args.output, 'w') as out:
         SeqIO.write(output_record, out, 'fasta')
-    print(f"Wrote inferred root sequence to {args.output}")
+    logger.info(f"Wrote inferred root sequence to {args.output}")
 
 
 if __name__ == "__main__":

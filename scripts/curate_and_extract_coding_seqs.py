@@ -12,7 +12,6 @@ Key features:
 """
 
 import argparse
-import lzma
 import logging
 import os
 import pandas as pd
@@ -20,6 +19,7 @@ from Bio import SeqIO
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
 from utils import (
+    open_sequence_file,
     setup_logging,
     sanitize_id,
     extract_all_genes_and_cds,
@@ -494,7 +494,7 @@ def extract_gene_cds(aligned_seq, cds_fragments, insertions_list, seq_id, raw_se
     return complete_cds, all_fragments_valid
 
 
-def validate_cds(cds_seq, gene_name, seq_id, logger, stats=None):
+def validate_cds(cds_seq, gene_name, stats=None):
     """
     Validate that CDS is biologically correct:
     1. Length is multiple of 3
@@ -504,9 +504,9 @@ def validate_cds(cds_seq, gene_name, seq_id, logger, stats=None):
     Args:
         cds_seq: CDS sequence string
         gene_name: Gene name for tracking stats
-        seq_id: Sequence ID for logging
-        logger: Logger instance
-        stats: Statistics dictionary to update (optional, for tracking failures)
+        stats: Statistics dictionary to update (optional). Failures are recorded
+               here rather than logged per sequence; main() reports the
+               aggregate once, under "Per-gene CDS validation failures".
 
     Returns:
         bool: True if valid, False otherwise
@@ -543,104 +543,9 @@ def validate_cds(cds_seq, gene_name, seq_id, logger, stats=None):
     return True
 
 
-def filter_sequences(records, ambiguous_characters, max_frac_gaps, max_frac_ambig, logger,
-                     filter_duplicates=False, replace_gaps_with_ref=False):
-    """
-    Backward-compatible wrapper around filter_and_yield_sequences for tests.
-    Returns a list of filtered records.
-
-    Args:
-        records: List of SeqRecord objects
-        ambiguous_characters: Set of ambiguous characters
-        max_frac_gaps: Maximum fraction of gaps allowed
-        max_frac_ambig: Maximum fraction of ambiguous nucleotides allowed
-        logger: Logger object
-        filter_duplicates: Whether to filter out duplicate sequences
-        replace_gaps_with_ref: Whether to replace gaps with reference nucleotides
-
-    Returns:
-        List of filtered SeqRecord objects
-    """
-    filtered_records = []
-    for record, _ in filter_and_yield_sequences(
-        records, ambiguous_characters, max_frac_gaps, max_frac_ambig,
-        filter_duplicates, replace_gaps_with_ref
-    ):
-        filtered_records.append(record)
-    return filtered_records
-
-
-def validate_against_raw_sequences(unaligned_records, raw_sequences_file):
-    """
-    Validate that each unaligned coding sequence is a substring of the original raw sequence.
-    Backward-compatible function for tests.
-
-    Args:
-        unaligned_records: List of SeqRecord objects with unaligned coding sequences
-        raw_sequences_file: Path to original raw sequences file (xz compressed)
-
-    Returns:
-        tuple: (num_validated, num_failed)
-    """
-    logger = logging.getLogger(__name__)
-    logger.info(f"Validating unaligned sequences against original raw sequences from {raw_sequences_file}")
-
-    # Load raw sequences and create a dictionary
-    raw_seqs_dict = {}
-    with lzma.open(raw_sequences_file, 'rt') as handle:
-        for record in SeqIO.parse(handle, 'fasta'):
-            # Sanitize the ID to match curated sequences
-            sanitized_id = sanitize_id(record.id)
-            # Convert to uppercase for case-insensitive comparison
-            raw_seqs_dict[sanitized_id] = str(record.seq).upper()
-
-    logger.info(f"Loaded {len(raw_seqs_dict)} raw sequences")
-
-    # Validate each unaligned sequence
-    num_validated = 0
-    num_failed = 0
-    num_skipped_reference = 0
-
-    for idx, record in enumerate(unaligned_records):
-        seq_id = record.id
-        unaligned_seq = str(record.seq).upper()
-
-        if seq_id not in raw_seqs_dict:
-            # Skip only the first sequence (reference)
-            if idx == 0:
-                num_skipped_reference += 1
-                logger.info(f"{seq_id}: Skipping validation (reference sequence)")
-                continue
-            else:
-                # Raise error for any other missing sequence
-                logger.error(f"{seq_id}: Not found in raw sequences file")
-                raise ValueError(f"{seq_id}: Not found in raw sequences file")
-
-        raw_seq = raw_seqs_dict[seq_id]
-
-        # Check if unaligned coding sequence is a substring of raw sequence
-        if unaligned_seq in raw_seq:
-            num_validated += 1
-            logger.debug(f"{seq_id}: PASS - Unaligned coding sequence found in raw sequence")
-        else:
-            num_failed += 1
-            logger.error(f"{seq_id}: FAIL - Unaligned coding sequence NOT found in raw sequence")
-            logger.error(f"  Unaligned length: {len(unaligned_seq)}, Raw length: {len(raw_seq)}")
-
-    logger.info(f"Validation results:")
-    logger.info(f"  Validated: {num_validated}")
-    logger.info(f"  Failed: {num_failed}")
-    logger.info(f"  Skipped (reference): {num_skipped_reference}")
-
-    if num_failed > 0:
-        logger.error(f"VALIDATION FAILED: {num_failed} sequences are not substrings of their raw sequences")
-
-    return num_validated, num_failed
-
-
 def main():
     args = parse_args()
-    logger = setup_logging()
+    logger = setup_logging(__name__)
 
     logger.info("=" * 80)
     logger.info("COMBINED CURATION AND CDS EXTRACTION PIPELINE")
@@ -691,7 +596,7 @@ def main():
     # Load raw sequences for validation
     logger.info(f"Loading raw sequences from {args.raw_sequences}")
     raw_seqs_dict = {}
-    with lzma.open(args.raw_sequences, 'rt') as handle:
+    with open_sequence_file(args.raw_sequences, 'rt') as handle:
         for raw_record in SeqIO.parse(handle, 'fasta'):
             sanitized_id = sanitize_id(raw_record.id)
             raw_seqs_dict[sanitized_id] = str(raw_record.seq).upper()
@@ -699,7 +604,7 @@ def main():
 
     # Read original MSA
     logger.info(f"Reading alignment from {args.input}")
-    with lzma.open(args.input, 'rt') as handle:
+    with open_sequence_file(args.input, 'rt') as handle:
         records = list(SeqIO.parse(handle, 'fasta'))
     logger.info(f"Read {len(records)} sequences")
 
@@ -795,7 +700,7 @@ def main():
             )
 
             # Validate biological correctness if fragments passed
-            if fragments_valid and validate_cds(cds_seq, gene_name, seq_id, logger, stats):
+            if fragments_valid and validate_cds(cds_seq, gene_name, stats):
                 extracted_cds[gene_name] = cds_seq
             else:
                 all_genes_valid = False
@@ -829,7 +734,7 @@ def main():
 
     # Write curated MSA
     logger.info(f"Writing {len(curated_records)} curated sequences to {output_curated_msa}")
-    with lzma.open(output_curated_msa, 'wt') as handle:
+    with open_sequence_file(output_curated_msa, 'wt') as handle:
         SeqIO.write(curated_records, handle, 'fasta')
 
     # Write reference files
@@ -852,7 +757,7 @@ def main():
             f"curated_unaligned_{gene_name}.fasta.xz"
         )
         logger.info(f"Writing {len(records)} sequences for {gene_name} to {output_file}")
-        with lzma.open(output_file, 'wt') as handle:
+        with open_sequence_file(output_file, 'wt') as handle:
             SeqIO.write(records, handle, 'fasta')
 
     # ========================================================================

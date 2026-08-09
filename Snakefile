@@ -2,6 +2,27 @@
 import glob
 configfile: "config.yaml"
 
+# Without these the default wildcard regex is `.+`, which matches `/`. A typo in
+# a target path then resolves against the wrong rule with a wildcard spanning
+# directory separators instead of failing.
+wildcard_constraints:
+    segment="[A-Za-z0-9]+",
+    subtype="[A-Za-z0-9]+",
+    n=r"\d+",
+    geo_group="[a-z_]+",
+
+
+
+# Only rules using Snakemake's `script:` directive are code-tracked. The ten
+# scripts invoked as `shell: python scripts/x.py` appear in no input: block, so
+# editing one leaves Snakemake reporting every downstream output up to date.
+# Declaring them as inputs closes that gap. Every script imports utils, so it is
+# always included.
+def script_deps(*script_names, include_utils=True):
+    """Input paths for a shell-invoked script plus the modules it imports."""
+    deps = ["scripts/" + name for name in script_names]
+    return deps + ["scripts/utils.py"] if include_utils else deps
+
 
 # Discover every GISAID FASTA + XLS file across the configured input dirs at
 # parse time so the md5 manifest rule can list them as explicit inputs and be
@@ -11,6 +32,17 @@ INPUT_DATA_FILES = sorted(
     for d in config["input_dirs"]
     for f in glob.glob(f"{d}/*.fasta") + glob.glob(f"{d}/*.xls")
 )
+
+# Fail at parse time rather than let input_data_md5sums degrade silently. With an
+# empty list, `md5sum {input} > {output}` becomes a bare `md5sum` reading stdin,
+# which writes "d41d8cd98f00b204e9800998ecf8427e  -" and exits 0 -- a provenance
+# manifest recording nothing. `set -euo pipefail` would not catch it, because
+# zero-argument md5sum succeeds.
+if not INPUT_DATA_FILES:
+    raise WorkflowError(
+        "No GISAID input files found. Looked for *.fasta and *.xls under: "
+        + ", ".join(config["input_dirs"])
+    )
 
 
 # Define the final outputs that should be created for each segment-subtype combination
@@ -73,16 +105,21 @@ rule all:
         # Per-node subtype inference for other segments (all subtypes combined)
         expand("results/{segment}/all/subtype_ancestral/combined_ancestral_states.tab",
                segment=[s for s in config["segments"] if s not in ["HA", "NA"]]),
-        # Executed analysis notebooks
-        "results/notebooks/analyze_metadata.done",
-        "results/notebooks/analyze_alignments.done",
-        "results/notebooks/analyze_dags.done",
+        # Executed analysis notebooks and the figures they produce
+        "results/notebooks/analyze_metadata.ipynb",
+        "results/notebooks/analyze_alignments.ipynb",
+        "results/notebooks/analyze_dags.ipynb",
+        expand("results/figures/{fig}.png",
+               fig=["alignment_filtering_stats", "leaves_per_tree",
+                    "frac_seqs_by_host", "delta_parsimony"]),
         # md5 manifest of all input GISAID data files
         "results/input_data_md5sums.txt"
 
 # Parse GISAID data files from all input directories at once
 rule parse_gisaid_data:
     conda: "envs/python.yaml"
+    input:
+        script=script_deps("parse_gisaid_data.py")
     output:
         metadata="results/combined_metadata.csv",
         # Generate output files for each segment-subtype combination
@@ -94,7 +131,9 @@ rule parse_gisaid_data:
                      segment=[s for s in config["segments"] if s not in ["HA", "NA"]])
     params:
         input_dirs=config["input_dirs"],
-        segments=" ".join(config["segments"])
+        segments=" ".join(config["segments"]),
+        ha_subtypes=" ".join(config["ha_subtypes"]),
+        na_subtypes=" ".join(config["na_subtypes"])
     log:
         "logs/parse_gisaid_data.log"
     shell:
@@ -103,6 +142,8 @@ rule parse_gisaid_data:
             --input-dirs {params.input_dirs} \
             --output-dir results \
             --segments {params.segments} \
+            --ha-subtypes {params.ha_subtypes} \
+            --na-subtypes {params.na_subtypes} \
             &> {log}
         """
 
@@ -130,15 +171,19 @@ rule download_all_references:
                      subtype=config["na_subtypes"]) + \
               expand("results/{segment}/all/reference/pathogen.json",
                      segment=[s for s in config["segments"] if s not in ["HA", "NA"]])
-    params:
+    input:
+        # Declared as an input, not just a params path: the accessions live in
+        # config.yaml, so editing one must re-trigger the download.
         config_file="config.yaml",
+        script=script_deps("download_ref_seq.py")
+    params:
         wait_time=30
     log:
         "logs/download_all_references.log"
     shell:
         """
         python scripts/download_ref_seq.py \
-            --config {params.config_file} \
+            --config {input.config_file} \
             --output-base-dir results \
             --wait-time {params.wait_time} \
             &> {log}
@@ -182,7 +227,8 @@ rule curate_and_extract_coding_seqs:
         alignment="results/{segment}/{subtype}/msa.fasta.xz",
         gff="results/{segment}/{subtype}/reference/reference.gff",
         tsv="results/{segment}/{subtype}/msa.tsv.xz",
-        raw_sequences="results/{segment}/{subtype}/raw_sequences.fasta.xz"
+        raw_sequences="results/{segment}/{subtype}/raw_sequences.fasta.xz",
+        script=script_deps("curate_and_extract_coding_seqs.py")
     output:
         # Curated MSA and reference files
         curated_msa="results/{segment}/{subtype}/curated_msa.fasta.xz",
@@ -218,7 +264,8 @@ rule curate_and_extract_coding_seqs:
 rule randomize_alignment:
     conda: "envs/python.yaml"
     input:
-        curated_msa="results/{segment}/{subtype}/curated_msa.fasta.xz"
+        curated_msa="results/{segment}/{subtype}/curated_msa.fasta.xz",
+        script=script_deps("randomize_alignment.py")
     output:
         "results/{segment}/{subtype}/randomized_{n}/msa.fasta.xz"
     params:
@@ -343,25 +390,40 @@ rule larch_merge:
 rule trim_dag:
     conda: "envs/historydag.yaml"
     input:
-        dag_protobuf="results/{segment}/{subtype}/larch_merged_dag.pb"
+        dag_protobuf="results/{segment}/{subtype}/larch_merged_dag.pb",
+        script=script_deps("trim_dag.py", include_utils=False)
     output:
         trimmed_dag_protobuf="results/{segment}/{subtype}/trimmed_dag.pb"
     log:
         "logs/{segment}/{subtype}/trim_dag.log"
-    script:
-        "scripts/trim_dag.py"
+    shell:
+        """
+        PYTHONHASHSEED=0 python scripts/trim_dag.py \
+            --input {input.dag_protobuf} \
+            --output {output.trimmed_dag_protobuf} \
+            &> {log}
+        """
 
 # Create a newick tree from the trimmed DAG
 rule create_newick:
     conda: "envs/historydag.yaml"
     input:
-        dag_protobuf="results/{segment}/{subtype}/trimmed_dag.pb"
+        dag_protobuf="results/{segment}/{subtype}/trimmed_dag.pb",
+        script=script_deps("convert_DAG_protobuf_to_newick_samples.py", include_utils=False)
     output:
         newick="results/{segment}/{subtype}/sampled_tree.nh"
+    params:
+        seed=config.get("tree_sample_seed", 0)
     log:
         "logs/{segment}/{subtype}/create_newick.log"
-    script:
-        "scripts/convert_DAG_protobuf_to_newick_samples.py"
+    shell:
+        """
+        PYTHONHASHSEED=0 python scripts/convert_DAG_protobuf_to_newick_samples.py \
+            --input {input.dag_protobuf} \
+            --output {output.newick} \
+            --seed {params.seed} \
+            &> {log}
+        """
 
 # Create MAT protobuf from newick tree
 rule create_mat_protobuf:
@@ -407,7 +469,8 @@ rule reroot_tree:
 rule create_root_samples_file:
     conda: "envs/python.yaml"
     input:
-        ref="results/{segment}/{subtype}/curated_reference.fasta"
+        ref="results/{segment}/{subtype}/curated_reference.fasta",
+        script=script_deps("create_root_samples_file.py")
     output:
         "results/{segment}/{subtype}/root_samples.txt"
     params:
@@ -457,7 +520,8 @@ rule create_root_fasta:
     input:
         msa="results/{segment}/{subtype}/curated_msa.fasta.xz",
         ref="results/{segment}/{subtype}/curated_reference.fasta",
-        paths="results/{segment}/{subtype}/root_paths.txt"
+        paths="results/{segment}/{subtype}/root_paths.txt",
+        script=script_deps("extract_root_sequence.py")
     output:
         "results/{segment}/{subtype}/curated_root.fasta"
     params:
@@ -485,7 +549,8 @@ rule create_root_fasta:
 rule augment_metadata:
     conda: "envs/python.yaml"
     input:
-        metadata="results/combined_metadata.csv"
+        metadata="results/combined_metadata.csv",
+        script=script_deps("augment_metadata.py", "simplified_host_classifier.py")
     output:
         "results/combined_metadata_augmented.csv"
     log:
@@ -522,7 +587,8 @@ rule create_geographic_samples_file:
     input:
         curated_msa="results/{segment}/{subtype}/curated_msa.fasta.xz",
         metadata="results/combined_metadata_augmented.csv",
-        root="results/{segment}/{subtype}/curated_root.fasta"
+        root="results/{segment}/{subtype}/curated_root.fasta",
+        script=script_deps("create_samples_file.py")
     output:
         "results/{segment}/{subtype}/geographic_trees/{geo_group}_samples.txt"
     log:
@@ -599,7 +665,8 @@ rule extract_final_newick:
 rule prepare_host_annotation:
     conda: "envs/python.yaml"
     input:
-        metadata="results/combined_metadata_augmented.csv"
+        metadata="results/combined_metadata_augmented.csv",
+        script=script_deps("prepare_host_annotation.py")
     output:
         "results/host_annotation.csv"
     log:
@@ -644,7 +711,8 @@ rule infer_node_hosts:
 rule prepare_subtype_annotation:
     conda: "envs/python.yaml"
     input:
-        metadata="results/combined_metadata_augmented.csv"
+        metadata="results/combined_metadata_augmented.csv",
+        script=script_deps("prepare_subtype_annotation.py")
     output:
         "results/subtype_annotation.csv"
     log:
@@ -683,32 +751,94 @@ rule infer_node_subtypes:
         """
 
 # Execute analysis notebooks and generate HTML reports
-rule execute_notebooks:
+# Every notebook waits on the whole pipeline before running.
+ALL_FINAL_TREES = (
+    expand("results/HA/{subtype}/final_tree.jsonl.gz", subtype=config["ha_subtypes"])
+    + expand("results/NA/{subtype}/final_tree.jsonl.gz", subtype=config["na_subtypes"])
+    + expand("results/{segment}/all/final_tree.jsonl.gz",
+             segment=[s for s in config["segments"] if s not in ["HA", "NA"]])
+)
+
+# The notebooks produce figures unevenly -- analyze_alignments 3, analyze_dags 1,
+# analyze_metadata 0 -- so a single {notebook} wildcard rule cannot declare them:
+# an output list cannot depend on the wildcard value. Hence one rule per
+# notebook, sharing the input list above.
+#
+# Each writes its executed copy to results/ instead of running --inplace over the
+# git-tracked source, which rewrote tracked files and churned output-cell diffs
+# on every run while declaring only a .done sentinel.
+
+rule execute_analyze_alignments:
     conda: "envs/python.yaml"
     input:
-        notebook="notebooks/{notebook}.ipynb",
-        # Ensure all main pipeline outputs are complete before running notebooks
+        notebook="notebooks/analyze_alignments.ipynb",
+        config_file="config.yaml",
         metadata="results/combined_metadata_augmented.csv",
-        ha_trees=expand("results/HA/{subtype}/final_tree.jsonl.gz",
-                       subtype=config["ha_subtypes"]),
-        na_trees=expand("results/NA/{subtype}/final_tree.jsonl.gz",
-                       subtype=config["na_subtypes"]),
-        other_trees=expand("results/{segment}/all/final_tree.jsonl.gz",
-                          segment=[s for s in config["segments"] if s not in ["HA", "NA"]])
+        trees=ALL_FINAL_TREES
     output:
-        "results/notebooks/{notebook}.done"
+        executed="results/notebooks/analyze_alignments.ipynb",
+        figures=expand("results/figures/{fig}.png",
+                       fig=["alignment_filtering_stats", "leaves_per_tree",
+                            "frac_seqs_by_host"])
     log:
-        "logs/notebooks/{notebook}.log"
+        "logs/notebooks/analyze_alignments.log"
+    shell:
+        """
+        mkdir -p results/notebooks results/figures
+        jupyter nbconvert --to notebook \
+            --execute \
+            --ExecutePreprocessor.timeout=600 \
+            --output-dir results/notebooks \
+            --output analyze_alignments.ipynb \
+            {input.notebook} \
+            &> {log}
+        """
+
+rule execute_analyze_dags:
+    conda: "envs/python.yaml"
+    input:
+        notebook="notebooks/analyze_dags.ipynb",
+        config_file="config.yaml",
+        metadata="results/combined_metadata_augmented.csv",
+        trees=ALL_FINAL_TREES
+    output:
+        executed="results/notebooks/analyze_dags.ipynb",
+        figure="results/figures/delta_parsimony.png"
+    log:
+        "logs/notebooks/analyze_dags.log"
+    shell:
+        """
+        mkdir -p results/notebooks results/figures
+        jupyter nbconvert --to notebook \
+            --execute \
+            --ExecutePreprocessor.timeout=600 \
+            --output-dir results/notebooks \
+            --output analyze_dags.ipynb \
+            {input.notebook} \
+            &> {log}
+        """
+
+rule execute_analyze_metadata:
+    conda: "envs/python.yaml"
+    input:
+        notebook="notebooks/analyze_metadata.ipynb",
+        config_file="config.yaml",
+        metadata="results/combined_metadata_augmented.csv",
+        trees=ALL_FINAL_TREES
+    output:
+        executed="results/notebooks/analyze_metadata.ipynb"
+    log:
+        "logs/notebooks/analyze_metadata.log"
     shell:
         """
         mkdir -p results/notebooks
         jupyter nbconvert --to notebook \
             --execute \
-            --inplace \
             --ExecutePreprocessor.timeout=600 \
+            --output-dir results/notebooks \
+            --output analyze_metadata.ipynb \
             {input.notebook} \
             &> {log}
-        touch {output}
         """
 
 # Record md5 sums of every input GISAID FASTA / XLS file as a provenance

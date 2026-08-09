@@ -6,7 +6,9 @@ channels:
   - nodefaults
 
 dependencies:
-  - snakemake
+  # Pinned to the version this pipeline was developed and validated against.
+  # Snakemake 8 changed executor and CLI semantics; migrating is a separate task.
+  - snakemake =7.32.4
   - git-lfs
   - gh
 

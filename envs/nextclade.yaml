@@ -6,4 +6,4 @@ channels:
   - nodefaults
 
 dependencies:
-  - nextclade
+  - nextclade =3.21.1

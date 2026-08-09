@@ -24,12 +24,11 @@ from curate_and_extract_coding_seqs import (
     slice_record,
     get_ambiguous_chars,
     analyze_record,
-    filter_sequences,
+    filter_and_yield_sequences,
     # Coding sequence extraction functions
     parse_insertions_from_tsv,
     remove_gaps,
     insert_nucleotides,
-    validate_against_raw_sequences,
     filter_insertions_for_cds,
     extract_cds_from_aligned,
     extract_gene_cds,
@@ -46,6 +45,24 @@ from utils import (
 # ============================================================================
 # TESTS FOR MSA CURATION FUNCTIONS
 # ============================================================================
+
+def filter_records(records, ambiguous_characters, max_frac_gaps, max_frac_ambig,
+                   filter_duplicates=False, replace_gaps_with_ref=False):
+    """
+    Collect filter_and_yield_sequences into a list.
+
+    The generator is what main() consumes; these tests assert on the whole
+    filtered set, so they need it materialised. This used to be a wrapper in
+    the production module, but nothing outside the tests called it.
+    """
+    return [
+        record
+        for record, _ in filter_and_yield_sequences(
+            records, ambiguous_characters, max_frac_gaps, max_frac_ambig,
+            filter_duplicates, replace_gaps_with_ref
+        )
+    ]
+
 
 class TestSliceRecord(unittest.TestCase):
     """Tests for slice_record function"""
@@ -171,8 +188,8 @@ class TestFilterSequences(unittest.TestCase):
         ]
         ambig_chars = set()
 
-        filtered = filter_sequences(records, ambig_chars, max_frac_gaps=0.05,
-                                   max_frac_ambig=0.01, logger=self.logger)
+        filtered = filter_records(records, ambig_chars, max_frac_gaps=0.05,
+                                  max_frac_ambig=0.01)
 
         self.assertEqual(len(filtered), 1)
         self.assertEqual(filtered[0].id, "seq1")
@@ -186,8 +203,8 @@ class TestFilterSequences(unittest.TestCase):
         ]
         ambig_chars = {'N'}
 
-        filtered = filter_sequences(records, ambig_chars, max_frac_gaps=0.05,
-                                   max_frac_ambig=0.01, logger=self.logger)
+        filtered = filter_records(records, ambig_chars, max_frac_gaps=0.05,
+                                  max_frac_ambig=0.01)
 
         self.assertEqual(len(filtered), 1)
         self.assertEqual(filtered[0].id, "seq1")
@@ -202,8 +219,8 @@ class TestFilterSequences(unittest.TestCase):
         ]
         ambig_chars = set()
 
-        filtered = filter_sequences(records, ambig_chars, max_frac_gaps=1.0,
-                                   max_frac_ambig=1.0, logger=self.logger)
+        filtered = filter_records(records, ambig_chars, max_frac_gaps=1.0,
+                                  max_frac_ambig=1.0)
 
         self.assertEqual(len(filtered), 2)
         self.assertEqual(filtered[0].id, "seq1")
@@ -216,8 +233,8 @@ class TestFilterSequences(unittest.TestCase):
         ]
         ambig_chars = {'R', 'Y', 'W'}
 
-        filtered = filter_sequences(records, ambig_chars, max_frac_gaps=1.0,
-                                   max_frac_ambig=1.0, logger=self.logger)
+        filtered = filter_records(records, ambig_chars, max_frac_gaps=1.0,
+                                  max_frac_ambig=1.0)
 
         self.assertEqual(len(filtered), 1)
         # R, Y, W should all be replaced with N
@@ -233,9 +250,9 @@ class TestFilterSequences(unittest.TestCase):
         ]
         ambig_chars = set()
 
-        filtered = filter_sequences(records, ambig_chars, max_frac_gaps=1.0,
-                                   max_frac_ambig=1.0, logger=self.logger,
-                                   filter_duplicates=True)
+        filtered = filter_records(records, ambig_chars, max_frac_gaps=1.0,
+                                  max_frac_ambig=1.0,
+                                  filter_duplicates=True)
 
         self.assertEqual(len(filtered), 2)
         self.assertEqual(filtered[0].id, "seq1")
@@ -250,9 +267,9 @@ class TestFilterSequences(unittest.TestCase):
         ]
         ambig_chars = set()
 
-        filtered = filter_sequences(records, ambig_chars, max_frac_gaps=1.0,
-                                   max_frac_ambig=1.0, logger=self.logger,
-                                   replace_gaps_with_ref=True)
+        filtered = filter_records(records, ambig_chars, max_frac_gaps=1.0,
+                                  max_frac_ambig=1.0,
+                                  replace_gaps_with_ref=True)
 
         self.assertEqual(len(filtered), 3)
         # Reference should be unchanged
@@ -623,81 +640,7 @@ class TestParseInsertionsFromTsv(unittest.TestCase):
                 os.unlink(f.name)
 
 
-class TestValidateAgainstRawSequences(unittest.TestCase):
-    """Tests for validate_against_raw_sequences function"""
-
-    def test_valid_substring(self):
-        """Test that unaligned sequence is substring of raw sequence"""
-        # Create test sequences
-        unaligned_records = [
-            SeqRecord(Seq("ACGTACGT"), id="seq1", description="seq1")
-        ]
-
-        with tempfile.NamedTemporaryFile(mode='wb', suffix='.fasta.xz', delete=False) as f:
-            with lzma.open(f.name, 'wt') as handle:
-                # Raw sequence contains the unaligned sequence
-                SeqIO.write([SeqRecord(Seq("TTTTACGTACGTGGGG"), id="seq1", description="seq1")], handle, 'fasta')
-
-            try:
-                num_validated, num_failed = validate_against_raw_sequences(unaligned_records, f.name)
-                self.assertEqual(num_validated, 1)
-                self.assertEqual(num_failed, 0)
-            finally:
-                os.unlink(f.name)
-
-    def test_invalid_not_substring(self):
-        """Test that validation fails when unaligned sequence is not substring"""
-        # Create test sequences
-        unaligned_records = [
-            SeqRecord(Seq("ACGTACGT"), id="seq1", description="seq1")
-        ]
-
-        with tempfile.NamedTemporaryFile(mode='wb', suffix='.fasta.xz', delete=False) as f:
-            with lzma.open(f.name, 'wt') as handle:
-                # Raw sequence does NOT contain the unaligned sequence
-                SeqIO.write([SeqRecord(Seq("TTTTGGGGCCCC"), id="seq1", description="seq1")], handle, 'fasta')
-
-            try:
-                num_validated, num_failed = validate_against_raw_sequences(unaligned_records, f.name)
-                self.assertEqual(num_validated, 0)
-                self.assertEqual(num_failed, 1)
-            finally:
-                os.unlink(f.name)
-
-    def test_case_insensitive(self):
-        """Test that validation is case-insensitive"""
-        # Create test sequences with mixed case
-        unaligned_records = [
-            SeqRecord(Seq("acgtACGT"), id="seq1", description="seq1")
-        ]
-
-        with tempfile.NamedTemporaryFile(mode='wb', suffix='.fasta.xz', delete=False) as f:
-            with lzma.open(f.name, 'wt') as handle:
-                # Raw sequence in different case
-                SeqIO.write([SeqRecord(Seq("TTTTacgtACGTGGGG"), id="seq1", description="seq1")], handle, 'fasta')
-
-            try:
-                num_validated, num_failed = validate_against_raw_sequences(unaligned_records, f.name)
-                self.assertEqual(num_validated, 1)
-                self.assertEqual(num_failed, 0)
-            finally:
-                os.unlink(f.name)
-
-
-# ============================================================================
-# TESTS FOR PER-GENE CDS EXTRACTION
-# ============================================================================
-#
-# These tests cover functions for extracting individual CDS per gene with
-# support for spliced genes and biological validation:
-# - group_cds_by_gene(): Group CDS features by gene/protein (in utils.py)
-# - filter_insertions_for_cds(): Filter insertions for specific CDS regions
-# - extract_cds_from_aligned(): Extract CDS from aligned sequences
-# - extract_gene_cds(): Complete gene CDS extraction with inline validation
-# - validate_cds(): CDS biological validation (frame, start codon, stop codon)
-# ============================================================================
-
-# Test data constants
+# Shared CDS fixtures used by the per-gene extraction and validation tests below.
 VALID_CDS_PERGENE = "ATGCGATCGTAA"  # 12 bp, starts with ATG, ends with TAA
 ALIGNED_CDS_WITH_GAPS_PERGENE = "ATG---CGATCG---TAA"  # 12 bp ungapped
 LONG_CDS_PERGENE = "ATGCGATCGAAACCGTTCGGTTGA"  # 24 bp
@@ -1344,102 +1287,119 @@ class TestExtractGeneCds(unittest.TestCase):
 class TestValidateCds(unittest.TestCase):
     """Tests for validate_cds() function"""
 
-    def setUp(self):
-        """Set up logger for tests"""
-        self.logger = logging.getLogger('test_logger_validate')
-        self.logger.setLevel(logging.DEBUG)
-        self.log_capture = StringIO()
-        handler = logging.StreamHandler(self.log_capture)
-        handler.setLevel(logging.DEBUG)
-        self.logger.addHandler(handler)
+    # validate_cds records failures in stats counters rather than logging them
+    # per sequence -- 70fb3ab removed the four logger.warning calls these tests
+    # used to assert on. The counters are what main() reports in aggregate under
+    # "Per-gene CDS validation failures", so they are what is checked here.
+    FAILURE_KEYS = (
+        'fragment_validation', 'wrong_length', 'too_short',
+        'missing_start_codon', 'missing_stop_codon',
+    )
 
-    def tearDown(self):
-        """Clean up logger handlers"""
-        self.logger.handlers.clear()
+    def setUp(self):
+        """Fresh stats dict, shaped as main() builds it."""
+        self.stats = {
+            'gene_validation_failures': {
+                'HA': {key: 0 for key in self.FAILURE_KEYS}
+            }
+        }
+
+    def assertFailureRecorded(self, reason):
+        """Exactly the named counter incremented, and nothing else."""
+        counts = self.stats['gene_validation_failures']['HA']
+        self.assertEqual(counts[reason], 1, f"{reason} was not incremented")
+        for key in self.FAILURE_KEYS:
+            if key != reason:
+                self.assertEqual(counts[key], 0, f"{key} incremented unexpectedly")
 
     def test_valid_cds_all_checks_pass(self):
         """Valid CDS with TAA stop codon"""
-        result = validate_cds(VALID_CDS_PERGENE, "HA", "seq1", self.logger)
+        result = validate_cds(VALID_CDS_PERGENE, "HA", self.stats)
         self.assertTrue(result)
 
     def test_valid_cds_with_tag_stop(self):
         """Valid CDS with TAG stop codon"""
         cds = "ATGCGATCGTAG"
-        result = validate_cds(cds, "HA", "seq1", self.logger)
+        result = validate_cds(cds, "HA", self.stats)
         self.assertTrue(result)
 
     def test_valid_cds_with_tga_stop(self):
         """Valid CDS with TGA stop codon"""
         cds = "ATGCGATCGTGA"
-        result = validate_cds(cds, "HA", "seq1", self.logger)
+        result = validate_cds(cds, "HA", self.stats)
         self.assertTrue(result)
 
     def test_invalid_frame_remainder_one(self):
         """CDS with length not divisible by 3 (remainder 1)"""
-        result = validate_cds(INVALID_FRAME_CDS_PERGENE, "HA", "seq1", self.logger)
+        result = validate_cds(INVALID_FRAME_CDS_PERGENE, "HA", self.stats)
 
         self.assertFalse(result)
-        log_output = self.log_capture.getvalue()
-        self.assertIn("not divisible by 3", log_output)
+        self.assertFailureRecorded("wrong_length")
 
     def test_invalid_frame_remainder_two(self):
         """CDS with length not divisible by 3 (remainder 2)"""
         cds = "ATGCGATCGTAAGG"  # 14 bp
-        result = validate_cds(cds, "HA", "seq1", self.logger)
+        result = validate_cds(cds, "HA", self.stats)
 
         self.assertFalse(result)
-        log_output = self.log_capture.getvalue()
-        self.assertIn("not divisible by 3", log_output)
+        self.assertFailureRecorded("wrong_length")
 
     def test_missing_start_codon(self):
         """CDS without ATG start codon"""
         cds = "TTGCGATCGTAA"
-        result = validate_cds(cds, "HA", "seq1", self.logger)
+        result = validate_cds(cds, "HA", self.stats)
 
         self.assertFalse(result)
-        log_output = self.log_capture.getvalue()
-        self.assertIn("does not start with ATG", log_output)
+        self.assertFailureRecorded("missing_start_codon")
 
     def test_missing_stop_codon(self):
         """CDS without proper stop codon"""
         cds = "ATGCGATCGTTA"  # Ends with TTA, not a stop codon
-        result = validate_cds(cds, "HA", "seq1", self.logger)
+        result = validate_cds(cds, "HA", self.stats)
 
         self.assertFalse(result)
-        log_output = self.log_capture.getvalue()
-        self.assertIn("does not end with stop codon", log_output)
+        self.assertFailureRecorded("missing_stop_codon")
 
     def test_too_short_sequence(self):
         """CDS too short (only start codon)"""
         cds = "ATG"
-        result = validate_cds(cds, "HA", "seq1", self.logger)
+        result = validate_cds(cds, "HA", self.stats)
 
         self.assertFalse(result)
-        log_output = self.log_capture.getvalue()
-        self.assertIn("too short", log_output)
+        self.assertFailureRecorded("too_short")
 
     def test_case_insensitive_validation(self):
         """Validation should be case-insensitive"""
         cds = "atgcgatcgtaa"  # Lowercase
-        result = validate_cds(cds, "HA", "seq1", self.logger)
+        result = validate_cds(cds, "HA", self.stats)
         self.assertTrue(result)
 
     def test_empty_sequence(self):
         """Empty sequence should fail validation"""
         cds = ""
-        result = validate_cds(cds, "HA", "seq1", self.logger)
+        result = validate_cds(cds, "HA", self.stats)
 
         self.assertFalse(result)
-        log_output = self.log_capture.getvalue()
-        self.assertIn("too short", log_output)
+        self.assertFailureRecorded("too_short")
 
-    def test_logging_contains_gene_name_and_seq_id(self):
-        """Log messages should include gene name and sequence ID"""
-        result = validate_cds(INVALID_FRAME_CDS_PERGENE, "HA", "test_seq", self.logger)
+    def test_failures_are_attributed_to_the_right_gene(self):
+        """Counters are keyed per gene, so a failure lands on that gene only.
+
+        Replaces a test that asserted the log line carried "test_seq|HA".
+        validate_cds no longer logs per sequence, so gene keying is the
+        attribution that remains checkable.
+        """
+        self.stats['gene_validation_failures']['NA'] = {
+            key: 0 for key in self.FAILURE_KEYS
+        }
+        result = validate_cds(INVALID_FRAME_CDS_PERGENE, "HA", self.stats)
 
         self.assertFalse(result)
-        log_output = self.log_capture.getvalue()
-        self.assertIn("test_seq|HA", log_output)
+        self.assertFailureRecorded("wrong_length")
+        self.assertTrue(
+            all(v == 0 for v in self.stats['gene_validation_failures']['NA'].values()),
+            "failure leaked onto another gene's counters",
+        )
 
 
 if __name__ == "__main__":
