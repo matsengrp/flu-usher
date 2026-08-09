@@ -79,18 +79,22 @@ class TestZeroMatchesIsAnError(unittest.TestCase):
             self.assertEqual(cm.exception.code, 1)
 
     def test_no_matching_samples_does_not_write_root_only_file(self):
-        """The regression: a 1-line file that renders as a single-node tree."""
+        """The regression: a 1-line file that renders as a single-node tree.
+
+        Asserted unconditionally. Guarding this on `if os.path.exists(output)`
+        made it vacuous -- the script exits before opening the output, so the
+        branch never ran and this duplicated the test above. The point is to
+        catch a future reordering that writes first and validates after.
+        """
         rows = [("EPI_ISL_1", "europe")]
         with tempfile.TemporaryDirectory() as tmpdir:
             output = os.path.join(tmpdir, "samples.txt")
             with self.assertRaises(SystemExit):
                 run_script(tmpdir, rows, value="asia")
-            if os.path.exists(output):
-                with open(output) as f:
-                    self.assertGreater(
-                        len(f.read().splitlines()), 1,
-                        "wrote a root-only samples file instead of failing",
-                    )
+            self.assertFalse(
+                os.path.exists(output),
+                "wrote a samples file instead of failing outright",
+            )
 
     def test_misspelled_value_exits_nonzero(self):
         """The realistic trigger: a typo in a configured geographic group."""
