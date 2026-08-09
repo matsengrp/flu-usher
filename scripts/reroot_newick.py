@@ -70,6 +70,18 @@ def main():
         )
         sys.exit(1)
 
+    # The point of the rule. A no-op set_outgroup would leave every downstream
+    # check happy -- the sequence gate passes whether or not rerooting happened,
+    # because both trees are matOptimize products of the same alignment -- so
+    # this is the only place that asserts the tree is rooted where it was asked.
+    children = [child.name for child in tree.children]
+    if args.root not in children:
+        logger.error(
+            f"reroot target '{args.root}' is not a child of the new root; "
+            f"root children are {children}"
+        )
+        sys.exit(1)
+
     # sampled_tree.nh carries no branch lengths; ete3 invents dist=1.0 and writes
     # them out. Inert -- matOptimize recomputes lengths from the VCF, and the
     # current pipeline already feeds it a length-free newick.

@@ -531,7 +531,8 @@ rule extract_tree_sequence_paths:
         final="results/{segment}/{subtype}/final_tree.pb.gz"
     output:
         sampled=temp("results/{segment}/{subtype}/seqcheck/sampled_paths.tsv"),
-        final=temp("results/{segment}/{subtype}/seqcheck/final_paths.tsv")
+        final=temp("results/{segment}/{subtype}/seqcheck/final_paths.tsv"),
+        newick=temp("results/{segment}/{subtype}/seqcheck/final_tree.nwk")
     log:
         "logs/{segment}/{subtype}/extract_sequence_paths.log"
     shell:
@@ -542,6 +543,8 @@ rule extract_tree_sequence_paths:
             -d $(dirname {output.sampled}) -S $(basename {output.sampled}) &> {log}
         matUtils extract -i {input.final} \
             -d $(dirname {output.final}) -S $(basename {output.final}) &>> {log}
+        matUtils extract -i {input.final} \
+            -d $(dirname {output.newick}) -t $(basename {output.newick}) &>> {log}
         """
 
 
@@ -550,11 +553,15 @@ rule check_tree_sequences:
     input:
         sampled_paths="results/{segment}/{subtype}/seqcheck/sampled_paths.tsv",
         final_paths="results/{segment}/{subtype}/seqcheck/final_paths.tsv",
+        newick="results/{segment}/{subtype}/seqcheck/final_tree.nwk",
         reference="results/{segment}/{subtype}/curated_reference.fasta",
         vcf="results/{segment}/{subtype}/randomized_0/msa.vcf",
+        config="config.yaml",
         script=script_deps("check_tree_sequences.py")
     output:
         "results/{segment}/{subtype}/reroot_sequence_check.txt"
+    params:
+        new_root=reroot_target
     log:
         "logs/{segment}/{subtype}/check_tree_sequences.log"
     shell:
@@ -564,6 +571,8 @@ rule check_tree_sequences:
             --final-paths {input.final_paths} \
             --reference {input.reference} \
             --input-vcf {input.vcf} \
+            --final-newick {input.newick} \
+            --expect-root '{params.new_root}' \
             --output {output} \
             &> {log}
         """

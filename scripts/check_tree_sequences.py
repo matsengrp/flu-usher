@@ -14,6 +14,15 @@ Compares the sequences implied by sampled_tree.pb.gz (pre-reroot) and
 final_tree.pb.gz (post-reroot), via the root-to-tip mutation paths that
 `matUtils extract -S` writes, and exits nonzero if any sample differs.
 
+What this does and does not prove. Both trees are matOptimize products of the
+same VCF, and matOptimize assigns mutations that reproduce the input genotypes
+exactly, so composing a root-to-tip path returns the alignment's genotype for
+any topology. This check therefore passes on a randomly scrambled tree; it is a
+coordinate-frame guard, not a rerooting-correctness guard. It catches a MAT that
+is not in the reference's frame -- the #49 bug -- and nothing else. That the
+tree is rooted where config.yaml asked is asserted separately, here via
+--expect-root and in reroot_newick.py; do not read a pass here as confirming it.
+
 Sites the input alignment leaves uncalled are excluded. faToVcf encodes a gap
 as missing data rather than as an allele, because a MAT stores substitutions
 only; matOptimize then fills those positions in by parsimony from the parent,
@@ -81,6 +90,42 @@ def genotype_key(genotype):
     return ";".join(f"{p}{genotype[p]}" for p in sorted(genotype))
 
 
+def _node_label(token):
+    """Name of the node a top-level newick token describes.
+
+    "EPI_ISL_1:55" -> "EPI_ISL_1";  "(a,b)node_2:3" -> "node_2".
+    """
+    token = token.strip()
+    close = token.rfind(")")
+    tail = token[close + 1:] if close != -1 else token
+    return tail.split(":")[0]
+
+
+def root_children(newick):
+    """Names of the root's direct children in a newick string.
+
+    Hand-rolled rather than via ete3 so this stays in envs/python.yaml: loading
+    a 130k-leaf tree just to read two names is not worth a second conda env in
+    the rule.
+    """
+    text = newick.strip()
+    end = text.rfind(")")
+    if not text.startswith("(") or end == -1:
+        raise ValueError("not a newick with an internal root node")
+    inner = text[1:end]
+    tokens, depth, start = [], 0, 0
+    for i, char in enumerate(inner):
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+        elif char == "," and depth == 0:
+            tokens.append(inner[start:i])
+            start = i + 1
+    tokens.append(inner[start:])
+    return [_node_label(t) for t in tokens]
+
+
 def uncalled_positions(vcf_path, samples, positions):
     """Return {sample: {position, ...}} for genotypes the input left uncalled.
 
@@ -121,7 +166,27 @@ def main():
     parser.add_argument("--input-vcf", required=True,
                         help="randomized_0/msa.vcf, for the called-site mask")
     parser.add_argument("--output", required=True, help="Report file")
+    parser.add_argument("--final-newick", default=None,
+                        help="newick of final_tree.pb.gz, for the root check")
+    parser.add_argument("--expect-root", default="",
+                        help="configured reroot target; empty if not rerooted")
     args = parser.parse_args()
+
+    # Fail before the expensive comparison. This is the invariant the pipeline
+    # actually depends on and the one the sequence comparison cannot see.
+    if args.expect_root:
+        if not args.final_newick:
+            logger.error("--expect-root given without --final-newick")
+            sys.exit(1)
+        with open(args.final_newick) as handle:
+            children = root_children(handle.read())
+        if args.expect_root not in children:
+            logger.error(
+                f"final tree is not rooted at '{args.expect_root}'; "
+                f"root children are {children}"
+            )
+            sys.exit(1)
+        logger.info(f"Final tree is rooted at '{args.expect_root}'")
 
     ref = read_reference(args.reference)
     logger.info(f"Reference spans {len(ref)} positions")
@@ -146,6 +211,18 @@ def main():
         sys.exit(1)
 
     n_samples = len(before)
+    # An empty paths file is not a pass. matUtils extract -S writes nothing at
+    # all when it dislikes its -S argument (see the comment on the rule that
+    # produces these), and Snakemake accepts the empty file as a satisfied
+    # output, so without this the whole gate reports success having compared
+    # nothing.
+    if n_samples == 0:
+        logger.error(
+            f"no samples in {args.sampled_paths}; refusing to pass a check "
+            "that compared nothing"
+        )
+        sys.exit(1)
+
     logger.info(f"{n_samples} samples compared, {len(candidates)} differ before masking")
 
     # Second pass materialises genotypes only for the samples that disagreed.
@@ -180,10 +257,14 @@ def main():
             handle.write(f"  {sample}: {sites[:10]}\n")
 
     if differing:
-        logger.error(
-            f"{len(differing)} of {n_samples} sequences changed across rerooting; "
-            f"see {args.output}"
-        )
+        # Snakemake deletes a failed job's outputs, so args.output is gone by
+        # the time anyone reads the error. The log survives; put the detail
+        # there too rather than pointing at a file that no longer exists.
+        logger.error(f"{len(differing)} of {n_samples} sequences changed across rerooting")
+        for sample, sites in list(differing.items())[:20]:
+            logger.error(f"  {sample}: {sites[:10]}")
+        if len(differing) > 20:
+            logger.error(f"  ... and {len(differing) - 20} more samples")
         sys.exit(1)
 
     logger.info(
