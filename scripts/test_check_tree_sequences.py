@@ -185,6 +185,22 @@ class EndToEndTestCase(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("sample sets differ", result.stderr)
 
+    def test_report_lists_both_kinds_of_differing_site(self):
+        """A key-set difference must not hide a same-key value difference.
+
+        EPI_A differs at position 1 (G vs C, called in both) and at position 3
+        (present only in the final tree). Reporting only the latter would send
+        someone debugging this to the wrong site.
+        """
+        sampled = "EPI_A\tnode_1:A1G\n"
+        final = "EPI_A\tnode_9:A1C,G3T\n"
+        result = self.run_check(sampled, final)
+        self.assertEqual(result.returncode, 1)
+        detail = [l for l in result.stderr.splitlines() if "EPI_A" in l]
+        self.assertTrue(detail, result.stderr)
+        self.assertIn("1", detail[-1])
+        self.assertIn("3", detail[-1])
+
     def test_extra_sample_in_final_tree_fails(self):
         """The other half of the mismatch check, OR'd into the same branch."""
         sampled = "EPI_A\tnode_1:A1G\n"

@@ -201,7 +201,7 @@ The pipeline expects GISAID data in each input directory:
 
 ### Important Notes
 
-- Tests live in six `scripts/test_*.py` modules (179 unittest tests: curate 91, rebase_mat_root 33, check_tree_sequences 30, parse_gisaid 11, reroot_newick 8, create_samples 6). Run them with `python -m unittest discover` from within `scripts/`. Under `envs/python.yaml` that reports `OK (skipped=8)`: `test_reroot_newick.py` is `skipIf`-guarded because ete3 lives in its own env, so run it separately under `envs/ete3.yaml` to actually exercise those 8 — `OK (skipped=N)` otherwise reads like a pass. No linting setup currently exists, and 11 of the 17 script modules are untested.
+- Tests live in seven `scripts/test_*.py` modules (202 unittest tests: curate 91, check_tree_sequences 31, rebase_mat_root 30, utils 18, parse_gisaid 15, create_samples 9, reroot_newick 8). Run them with `python -m unittest discover` from within `scripts/`. Under `envs/python.yaml` that reports `OK (skipped=8)`: `test_reroot_newick.py` is `skipIf`-guarded because ete3 lives in its own env, so run it separately under `envs/ete3.yaml` to actually exercise those 8 — `OK (skipped=N)` otherwise reads like a pass. No linting setup currently exists, and 10 of the 17 script modules are untested.
 - The pipeline uses compressed outputs (.xz, .gz) to save disk space
 - All logs are saved in the `logs/` directory organized by segment/subtype
 - The pipeline can process multiple influenza subtypes simultaneously

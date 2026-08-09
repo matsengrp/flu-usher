@@ -117,6 +117,16 @@ def root_children(newick):
     Hand-rolled rather than via ete3 so this stays in envs/python.yaml: loading
     a 130k-leaf tree just to read two names is not worth a second conda env in
     the rule.
+
+    Scanning for delimiters like this would mis-parse a label containing '(',
+    ')' or ':'. No such label reaches here, and that is enforced rather than
+    assumed: sanitize_id() in utils.py strips [ ] ( ) : ; , ' . from every
+    sequence ID, and curate_and_extract_coding_seqs.py applies it upstream of
+    everything that becomes a leaf; internal names are internal_<id> from
+    convert_DAG_protobuf_to_newick_samples.py. Checked against the shipped
+    trees: 0 of 84,664 labels in HA/H7 and NA/N1 contain any of them. Newick
+    comments in [...] are likewise not handled, and matUtils does not emit
+    them. Anything feeding this an arbitrary newick needs a real parser.
     """
     text = newick.strip()
     end = text.rfind(")")
@@ -278,7 +288,13 @@ def main():
             b = {p: v for p, v in final[sample].items() if p not in skip}
             excluded_sites += len(skip)
             if a != b:
-                sites = sorted(set(a) ^ set(b)) or sorted(p for p in a if a[p] != b.get(p))
+                # Both kinds of difference, not just the first kind that
+                # happens to be non-empty: a sample can have a position called
+                # in one tree and not the other *and* a position called in
+                # both with different bases. Reporting only the former sends
+                # whoever debugs this looking at the wrong sites.
+                sites = sorted(set(a) ^ set(b)
+                               | {p for p in set(a) & set(b) if a[p] != b[p]})
                 differing[sample] = sites
 
     with open(args.output, "w") as handle:

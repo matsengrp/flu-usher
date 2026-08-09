@@ -144,6 +144,11 @@ class RebaseOntoRootTestCase(unittest.TestCase):
         self.assertEqual((moved, repointed), ({}, 0))
         self.assertEqual(self.child.mutation[0].ref_nuc, A)
 
+    def test_empty_node_mutations_raises(self):
+        """A MAT with no node lists has no root; IndexError would not say so."""
+        with self.assertRaises(ValueError):
+            rebase_onto_root([])
+
     def test_is_idempotent(self):
         """Rebasing an already-rebased tree changes nothing further."""
         rebase_onto_root(self.nodes)

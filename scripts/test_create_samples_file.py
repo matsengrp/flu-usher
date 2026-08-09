@@ -23,17 +23,21 @@ ROOT_ID = "EPI_ISL_ROOT"
 REFERENCE_ID = "REFERENCE"
 
 
-def write_inputs(tmpdir, rows):
+def write_inputs(tmpdir, rows, msa_only=()):
     """
     Build the three inputs the script reads.
 
     rows: list of (isolate_id, geographic_group) for the metadata. Every
     isolate_id also goes into the curated MSA, behind the reference.
+    msa_only: isolate_ids written to the MSA but left out of the metadata,
+    for exercising the "MSA and metadata are out of sync" check.
     """
     msa = os.path.join(tmpdir, "curated_msa.fasta.xz")
     with lzma.open(msa, "wt") as f:
         f.write(f">{REFERENCE_ID}\nACGT\n")
         for isolate_id, _ in rows:
+            f.write(f">{isolate_id}\nACGT\n")
+        for isolate_id in msa_only:
             f.write(f">{isolate_id}\nACGT\n")
 
     root = os.path.join(tmpdir, "curated_root.fasta")
@@ -50,9 +54,9 @@ def write_inputs(tmpdir, rows):
     return msa, root, metadata
 
 
-def run_script(tmpdir, rows, value, column="geographic_group"):
+def run_script(tmpdir, rows, value, column="geographic_group", msa_only=()):
     """Invoke main() as the rule does. Returns the output path."""
-    msa, root, metadata = write_inputs(tmpdir, rows)
+    msa, root, metadata = write_inputs(tmpdir, rows, msa_only=msa_only)
     output = os.path.join(tmpdir, "samples.txt")
     argv = [
         "create_samples_file.py",
@@ -66,6 +70,38 @@ def run_script(tmpdir, rows, value, column="geographic_group"):
     with mock.patch.object(sys, "argv", argv):
         create_samples_file.main()
     return output
+
+
+class TestMsaAndMetadataMustAgree(unittest.TestCase):
+    """A sample in the MSA but not the metadata means the two are out of sync.
+
+    A distinct fail-fast path from the empty-filter one, and a plausible real
+    failure: the MSA and the metadata are produced by different rules, so one
+    can be rebuilt without the other.
+    """
+
+    def test_msa_sample_missing_from_metadata_exits_nonzero(self):
+        rows = [("EPI_ISL_1", "asia")]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with self.assertRaises(SystemExit) as cm:
+                run_script(tmpdir, rows, value="asia", msa_only=["EPI_ISL_STRAY"])
+            self.assertEqual(cm.exception.code, 1)
+
+    def test_msa_sample_missing_from_metadata_writes_nothing(self):
+        rows = [("EPI_ISL_1", "asia")]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output = os.path.join(tmpdir, "samples.txt")
+            with self.assertRaises(SystemExit):
+                run_script(tmpdir, rows, value="asia", msa_only=["EPI_ISL_STRAY"])
+            self.assertFalse(os.path.exists(output),
+                             "wrote a samples file despite inconsistent inputs")
+
+    def test_matching_filter_still_passes_without_stray_samples(self):
+        """Control: the same inputs minus the stray sample must succeed."""
+        rows = [("EPI_ISL_1", "asia")]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output = run_script(tmpdir, rows, value="asia")
+            self.assertTrue(os.path.exists(output))
 
 
 class TestZeroMatchesIsAnError(unittest.TestCase):
