@@ -180,18 +180,27 @@ rule download_all_references:
               expand("results/{segment}/all/reference/pathogen.json",
                      segment=[s for s in config["segments"] if s not in ["HA", "NA"]])
     input:
-        # Declared as an input, not just a params path: the accessions live in
-        # config.yaml, so editing one must re-trigger the download.
-        config_file="config.yaml",
         script=script_deps("download_ref_seq.py")
     params:
+        # The values this rule actually consumes, declared so the default
+        # `params` rerun-trigger hashes them. config.yaml is deliberately NOT an
+        # input: this rule sits at the head of the DAG, so depending on the
+        # file's mtime made every config edit -- a reroot target, a seed, a
+        # filtering threshold -- re-download the references and re-derive the
+        # whole pipeline. Measured before this change: one reroot target
+        # changed re-ran 1235 of 1235 jobs. Naming the values instead keeps the
+        # trigger precise; the script still reads the file for the rest.
+        references=config["references"],
+        ha_subtypes=config["ha_subtypes"],
+        na_subtypes=config["na_subtypes"],
+        segments=config["segments"],
         wait_time=30
     log:
         "logs/download_all_references.log"
     shell:
         """
         python scripts/download_ref_seq.py \
-            --config {input.config_file} \
+            --config config.yaml \
             --output-base-dir results \
             --wait-time {params.wait_time} \
             &> {log}

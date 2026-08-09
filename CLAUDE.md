@@ -48,17 +48,19 @@ snakemake --cores 8 --use-conda results/HA/H5/geographic_trees/north_america_tre
 snakemake --cores 8 --use-conda <target> --forcerun <rule_name>
 
 # `--rerun-triggers mtime` narrows the default trigger set (mtime, params,
-# input, software-env, code) down to mtime alone, disabling params-based
-# invalidation. That is safe for config.yaml, contrary to what this file used
-# to say: download_all_references passes config.yaml to its script, so it is a
-# real input, and it sits at the head of the DAG. Editing any config value
-# changes that file's mtime, re-runs it, and cascades through the reference
-# files to everything -- measured, one reroot target changed re-runs 1235 of
-# 1235 jobs, identically with and without the params trigger.
+# input, software-env, code) down to mtime alone, which disables params-based
+# invalidation. No rule declares config.yaml as an input any more, so under
+# mtime-only a config edit invalidates NOTHING and every affected output goes
+# quietly stale. Use it for a quick dry run, not to decide whether real work is
+# up to date.
 #
-# The flip side is that config.yaml invalidation is maximally blunt: there is
-# no such thing as editing one config value and re-running only what depends
-# on it. Expect a full re-derivation from any config edit.
+# Under the default triggers, config invalidation is precise: each rule names
+# the config values it consumes in `params:`, so editing a reroot target
+# re-runs the reroot rules and leaves the alignments alone. It did not used to
+# be -- download_all_references took config.yaml as an input at the head of the
+# DAG, so any edit re-downloaded the references and cascaded through
+# everything. Measured before that change: one reroot target re-ran 1235 of
+# 1235 jobs, identically with and without the params trigger.
 snakemake -n --use-conda <target> --rerun-triggers mtime
 
 # Generate workflow visualization
