@@ -42,6 +42,19 @@ class ParseMutationTestCase(unittest.TestCase):
         with self.assertRaises(ValueError):
             parse_mutation("133G")
 
+    def test_non_ascii_letter_base_raises(self):
+        """str.isalpha() would accept this and write the omega into a FASTA."""
+        with self.assertRaises(ValueError):
+            parse_mutation("A33\u03a9")
+
+    def test_non_ascii_digit_position_raises(self):
+        """'\u00b2'.isdigit() is True but int() rejects it; fail here, not there."""
+        with self.assertRaises(ValueError):
+            parse_mutation("A\u00b2G")
+
+    def test_lowercase_bases_are_accepted(self):
+        self.assertEqual(parse_mutation("a33t"), ("a", 33, "t"))
+
 
 class IterPathMutationsTestCase(unittest.TestCase):
     def test_empty_path(self):

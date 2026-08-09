@@ -285,14 +285,28 @@ class TestUnparseableSubtype(unittest.TestCase):
         self.assertEqual(read_records(out, "NA", "N1"), ["EPI_ISL_1"])
 
     def test_partial_subtype_is_not_half_matched(self):
-        """"H3" alone has no N part, so the regex must reject the whole thing."""
-        code, out = self.run_with(seq_id("HA", "EPI_ISL_2", "A_/_H3"))
+        """"H3" alone has no N part, so the regex must reject the whole thing.
+
+        H3 is deliberately CONFIGURED here. With it unconfigured, a regex that
+        half-matched and returned ("H3", None) would be dropped by the
+        unrelated "subtype not configured" branch, producing exactly the same
+        observable result as correct rejection -- so the test could not tell
+        the two apart. Configuring it means a half-match would visibly write
+        an HA/H3 record.
+        """
+        tmpdir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmpdir, True)
+        records = self.GOOD + [
+            seq_id("HA", "EPI_ISL_3", "A_/_H3N2"),      # keeps H3 non-empty
+            seq_id("HA", "EPI_ISL_2", "A_/_H3"),        # the partial one
+        ]
+        code, out = run_parse(tmpdir, records,
+                              ["EPI_ISL_1", "EPI_ISL_2", "EPI_ISL_3"],
+                              ha_subtypes=["H1", "H3"], na_subtypes=["N1"])
         self.assertEqual(code, 0)
-        self.assertEqual(read_records(out, "HA", "H1"), ["EPI_ISL_1"])
-        self.assertFalse(
-            os.path.exists(os.path.join(out, "HA", "H3")),
-            "created an H3 directory from a subtype with no N part",
-        )
+        self.assertEqual(read_records(out, "HA", "H3"), ["EPI_ISL_3"],
+                         "EPI_ISL_2 was half-matched into H3 on a subtype "
+                         "with no N part")
 
     def test_internal_segment_ignores_the_subtype_entirely(self):
         """Internal segments group as 'all', so the H*N* parse never applies."""

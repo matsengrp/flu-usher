@@ -196,10 +196,13 @@ class EndToEndTestCase(unittest.TestCase):
         final = "EPI_A\tnode_9:A1C,G3T\n"
         result = self.run_check(sampled, final)
         self.assertEqual(result.returncode, 1)
-        detail = [l for l in result.stderr.splitlines() if "EPI_A" in l]
-        self.assertTrue(detail, result.stderr)
-        self.assertIn("1", detail[-1])
-        self.assertIn("3", detail[-1])
+        # Assert the exact list from the report, not a substring of stderr:
+        # log lines carry a timestamp, and "14:30:16,636" contains both a "1"
+        # and a "3", so substring checks pass no matter what was reported.
+        # The old expression yields [3] here; this must distinguish them.
+        with open(os.path.join(self.tmp.name, "report.txt")) as handle:
+            report = handle.read()
+        self.assertIn("EPI_A: [1, 3]", report, report)
 
     def test_extra_sample_in_final_tree_fails(self):
         """The other half of the mismatch check, OR'd into the same branch."""

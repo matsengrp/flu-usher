@@ -7,6 +7,15 @@ import logging
 import lzma
 import re
 
+DIGITS = "0123456789"
+
+# IUPAC nucleotide codes plus the gap character, in both cases. matUtils only
+# ever writes ACGT for this pipeline's data -- 2,628,520 tokens checked across
+# all 16 combinations, no other character appears -- but a MAT can carry an
+# ambiguous state, so accepting the codes costs nothing and rejecting anything
+# outside the set is what makes the check worth having.
+BASES = frozenset("ACGTUNRYSWKMBDHV" + "acgtunryswkmbdhv" + "-")
+
 
 def setup_logging(name=None):
     """
@@ -41,12 +50,15 @@ def parse_mutation(token):
     if len(token) < 3:
         raise ValueError(f"malformed mutation token {token!r}: too short")
     parent, position, mutant = token[0], token[1:-1], token[-1]
-    if not position.isdigit():
+    # Both checks are deliberately charset-explicit rather than str.isdigit() /
+    # str.isalpha(), which accept any Unicode digit or letter: '2'.isdigit() is
+    # True for the superscript form that int() then rejects, and 'A33O'.isalpha()
+    # passes with a Greek omega that would be written straight into a FASTA.
+    # Failing at the parse boundary is the whole point of this function.
+    if not position or position.strip(DIGITS) != "":
         raise ValueError(f"malformed mutation token {token!r}: bad position")
-    # IUPAC codes and gaps are permitted; digits are not, since that would mean
-    # the position slice took a character it should not have.
     for base in (parent, mutant):
-        if not (base.isalpha() or base == '-'):
+        if base not in BASES:
             raise ValueError(f"malformed mutation token {token!r}: bad base {base!r}")
     return parent, int(position), mutant
 

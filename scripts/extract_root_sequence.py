@@ -7,7 +7,7 @@ import sys
 from Bio import SeqIO
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
-from utils import open_sequence_file, parse_mutation, setup_logging
+from utils import iter_path_mutations, open_sequence_file, setup_logging
 
 logger = setup_logging(__name__)
 
@@ -22,19 +22,24 @@ def extract_sequence_from_msa(msa_file, sequence_name):
 
 
 def parse_mutation_path(paths_file, new_root_name):
-    """Extract all mutations from the path to the new root."""
+    """Return the root-to-tip mutations for one sample, as parsed triples.
+
+    Tokenizing is delegated to utils.iter_path_mutations rather than repeated
+    here. The hand-rolled version this replaces split on ':' by index, which
+    raised a bare IndexError on a colon-less chunk instead of saying what was
+    wrong, and was a fourth copy of the format the shared parser exists to own.
+    """
     with open(paths_file) as f:
         for line in f:
-            parts = line.strip().split('\t')
-            if len(parts) == 2 and parts[0] == new_root_name:
-                # Parse mutation path
-                mutations = []
-                if parts[1]:  # Non-empty path
-                    for node in parts[1].split():
-                        node_muts = node.split(':')[1]
-                        if node_muts:
-                            mutations.extend(node_muts.split(','))
-                return mutations
+            # rstrip('\n'), not strip(): a sample whose path is empty writes
+            # "name\t\n", and strip() eats the tab, so the row split to one
+            # field and the sample was reported missing rather than
+            # mutation-free. Every root_paths.txt on disk has such a row -- the
+            # reference against itself -- so this only escaped notice because
+            # nothing ever looks that row up.
+            parts = line.rstrip('\n').split('\t')
+            if len(parts) >= 2 and parts[0] == new_root_name:
+                return list(iter_path_mutations(parts[1]))
     raise ValueError(f"Sample {new_root_name} not found in paths file")
 
 
@@ -48,8 +53,8 @@ def apply_mutations(reference_seq, mutations):
     rebase_mat_root.root_sequence(), which does the same job from the protobuf.
     """
     seq = list(str(reference_seq))
-    for token in mutations:
-        parent, position, mutant = parse_mutation(token)
+    for parent, position, mutant in mutations:
+        token = f"{parent}{position}{mutant}"
         index = position - 1
         if not 0 <= index < len(seq):
             logger.error(
@@ -108,8 +113,15 @@ def main():
         ref_record = next(SeqIO.parse(f, 'fasta'))
     logger.info(f"Loaded reference sequence: {ref_record.id} ({len(ref_record.seq)} bp)")
 
-    # Parse mutation path for new root
-    mutations = parse_mutation_path(args.paths, args.new_root_name)
+    # Parse mutation path for new root. Both failure modes -- the sample not
+    # being in the file, and a token the shared parser rejects -- are the
+    # pipeline's problem to report, not a traceback's: the other two failures
+    # in this script already exit(1) with an explanation, so match them.
+    try:
+        mutations = parse_mutation_path(args.paths, args.new_root_name)
+    except ValueError as error:
+        logger.error(f"could not read the path to {args.new_root_name}: {error}")
+        sys.exit(1)
     logger.info(f"Found {len(mutations)} mutations along path to {args.new_root_name}")
 
     # Apply mutations to reference sequence
