@@ -12,9 +12,13 @@ from rebase_mat_root import (NUCLEOTIDES, read_reference, root_sequence,
                              zero_root_branch_length)
 
 
-def mutation(position, par_nuc, mut_nuc):
-    """A stand-in for the protobuf message, which only needs three fields."""
-    return SimpleNamespace(position=position, par_nuc=par_nuc, mut_nuc=[mut_nuc])
+def mutation(position, par_nuc, *mut_nuc):
+    """A stand-in for the protobuf message, which only needs three fields.
+
+    mut_nuc is variadic because the schema declares it repeated, so it can
+    carry an ambiguous state rather than a single base.
+    """
+    return SimpleNamespace(position=position, par_nuc=par_nuc, mut_nuc=list(mut_nuc))
 
 
 A, C, G, T = (NUCLEOTIDES.index(b) for b in "ACGT")
@@ -77,6 +81,18 @@ class RootSequenceTestCase(unittest.TestCase):
         """Positions are 1-based; 0 would silently write to index -1."""
         with self.assertRaises(SystemExit) as cm:
             root_sequence(self.REFERENCE, [mutation(0, A, G)])
+        self.assertEqual(cm.exception.code, 1)
+
+    def test_ambiguous_mut_nuc_exits_nonzero(self):
+        """mut_nuc is repeated; taking [0] would silently pick one base."""
+        with self.assertRaises(SystemExit) as cm:
+            root_sequence(self.REFERENCE, [mutation(1, A, G, T)])
+        self.assertEqual(cm.exception.code, 1)
+
+    def test_empty_mut_nuc_exits_nonzero(self):
+        """An empty repeated field would raise IndexError rather than explain."""
+        with self.assertRaises(SystemExit) as cm:
+            root_sequence(self.REFERENCE, [mutation(1, A)])
         self.assertEqual(cm.exception.code, 1)
 
 

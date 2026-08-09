@@ -111,6 +111,18 @@ def root_sequence(reference, root_mutations):
                 f"base {expected}, but the reference has {seq[index]}"
             )
             sys.exit(1)
+        # mut_nuc is a repeated field so the schema can carry an ambiguous
+        # state. Everything below reads mut_nuc[0], which would silently pick
+        # one of several possibilities. usher has not written an ambiguous root
+        # mutation for any of this pipeline's 16 combinations, so refuse rather
+        # than guess if that ever changes.
+        if len(mutation.mut_nuc) != 1:
+            logger.error(
+                f"root mutation at position {mutation.position} carries "
+                f"{len(mutation.mut_nuc)} alternate bases; this script assumes "
+                "an unambiguous state and will not choose between them"
+            )
+            sys.exit(1)
         seq[index] = NUCLEOTIDES[mutation.mut_nuc[0]]
     return "".join(seq)
 
