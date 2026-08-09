@@ -70,6 +70,26 @@ def save_mat(mat, path):
         handle.write(mat.SerializeToString())
 
 
+def zero_root_branch_length(newick):
+    """Set the root's own branch length to 0, leaving the rest untouched.
+
+    Branch lengths in a MAT newick are mutation counts, so emptying the root's
+    mutation list without this leaves the tree asserting a root branch of, say,
+    113 mutations that the file no longer contains.
+    """
+    text = newick.rstrip()
+    terminator = ""
+    if text.endswith(";"):
+        text, terminator = text[:-1], ";"
+    close = text.rfind(")")
+    if close == -1:
+        return newick
+    head, tail = text[:close + 1], text[close + 1:]
+    if ":" in tail:
+        tail = tail[:tail.rindex(":")] + ":0"
+    return head + tail + terminator
+
+
 def root_sequence(reference, root_mutations):
     """Apply the root's mutation list to the reference, 1-based positions."""
     seq = list(reference)
@@ -128,6 +148,7 @@ def main():
                 repointed += 1
 
     del root.mutation[:]
+    mat.newick = zero_root_branch_length(mat.newick)
 
     save_mat(mat, args.output_mat)
     with open(args.output_fasta, "w") as handle:

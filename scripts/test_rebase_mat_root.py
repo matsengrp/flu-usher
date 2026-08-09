@@ -8,7 +8,8 @@ import tempfile
 import unittest
 from types import SimpleNamespace
 
-from rebase_mat_root import NUCLEOTIDES, read_reference, root_sequence
+from rebase_mat_root import (NUCLEOTIDES, read_reference, root_sequence,
+                             zero_root_branch_length)
 
 
 def mutation(position, par_nuc, mut_nuc):
@@ -83,6 +84,41 @@ class NucleotideEncodingTestCase(unittest.TestCase):
     def test_encoding_matches_usher(self):
         """Verified against matUtils paths: pos 33 par_nuc=0 mut_nuc=3 is A33T."""
         self.assertEqual(NUCLEOTIDES, "ACGT")
+
+
+class ZeroRootBranchLengthTestCase(unittest.TestCase):
+    """Branch lengths are mutation counts, so the emptied root must read 0.
+
+    Caught by comparing against bte, which does this and my first version
+    did not: the tree claimed a 113-mutation root branch it no longer held.
+    """
+
+    def test_replaces_root_branch_length(self):
+        self.assertEqual(
+            zero_root_branch_length("(a:1,(b:2,c:3):4):113;"),
+            "(a:1,(b:2,c:3):4):0;",
+        )
+
+    def test_leaves_inner_branch_lengths_alone(self):
+        got = zero_root_branch_length("(a:1,(b:2,c:3):4):113;")
+        self.assertIn("a:1", got)
+        self.assertIn("b:2", got)
+        self.assertIn(":4)", got)
+
+    def test_named_root(self):
+        self.assertEqual(
+            zero_root_branch_length("(a:1,b:2)node_1:9;"),
+            "(a:1,b:2)node_1:0;",
+        )
+
+    def test_no_root_branch_length_is_left_alone(self):
+        self.assertEqual(zero_root_branch_length("(a:1,b:2);"), "(a:1,b:2);")
+
+    def test_missing_terminator(self):
+        self.assertEqual(zero_root_branch_length("(a:1,b:2):7"), "(a:1,b:2):0")
+
+    def test_non_newick_is_returned_unchanged(self):
+        self.assertEqual(zero_root_branch_length("nonsense"), "nonsense")
 
 
 if __name__ == "__main__":
