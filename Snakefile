@@ -441,6 +441,10 @@ rule create_mat_protobuf:
         vcf_file="results/{segment}/{subtype}/randomized_0/msa.vcf"
     output:
         protobuf_name="results/{segment}/{subtype}/sampled_tree.pb.gz"
+    # usher detects hardware concurrency when -T is omitted, so an undeclared
+    # rule claimed 1 core from the scheduler and then span 32. Declare and pass
+    # it through, as create_alignment and optimize_tree already do.
+    threads: config["threads"]
     log:
         "logs/{segment}/{subtype}/create_mat_protobuf.log"
     shell:
@@ -455,7 +459,7 @@ rule create_mat_protobuf:
         """
         TMPD=$(mktemp -d)
         trap "rm -rf $TMPD" EXIT
-        usher -t {input.nh_file} -v {input.vcf_file} \
+        usher -T {threads} -t {input.nh_file} -v {input.vcf_file} \
             -d $TMPD -o $PWD/{output.protobuf_name} &> {log}
         """
 
@@ -502,7 +506,7 @@ rule reroot_newick:
         python scripts/reroot_newick.py \
             --input {input.newick} \
             --output {output} \
-            --root {params.new_root} \
+            --root '{params.new_root}' \
             &> {log}
         """
 
@@ -518,8 +522,10 @@ rule create_final_mat:
         "results/{segment}/{subtype}/reference_origin_tree.pb.gz"
     params:
         new_root=reroot_target
+    # See create_mat_protobuf: usher grabs every core unless told otherwise.
+    threads: config["threads"]
     log:
-        "logs/{segment}/{subtype}/reroot.log"
+        "logs/{segment}/{subtype}/create_final_mat.log"
     shell:
         # usher rather than matOptimize, because this step must preserve the
         # rooting reroot_newick just established. matOptimize normalises the
@@ -532,7 +538,8 @@ rule create_final_mat:
         if [ -n "{params.new_root}" ]; then
             TMPD=$(mktemp -d)
             trap "rm -rf $TMPD" EXIT
-            usher -t {input.tree} -v {input.vcf} -d $TMPD -o $PWD/{output} &> {log}
+            usher -T {threads} -t {input.tree} -v {input.vcf} \
+                -d $TMPD -o $PWD/{output} &> {log}
         else
             ln -sf $(basename {input.tree}) {output} \
             && echo "Created symlink (no rerooting specified)" > {log}
@@ -731,6 +738,12 @@ rule convert_to_taxonium:
     conda: "envs/taxonium.yaml"
     input:
         final_tree="results/{segment}/{subtype}/final_tree.pb.gz",
+        # Depending on the gate's report, not just listing it in `rule all`, is
+        # what makes it a gate. CLAUDE.md documents building one combination by
+        # targeting its final_tree.jsonl.gz; that DAG never reaches `rule all`,
+        # so without this edge the check is skipped for exactly the workflow
+        # people use most, and a bad tree gets published anyway.
+        check="results/{segment}/{subtype}/reroot_sequence_check.txt",
         metadata="results/combined_metadata_augmented.csv"
     output:
         "results/{segment}/{subtype}/final_tree.jsonl.gz"
@@ -776,6 +789,9 @@ rule extract_geographic_subtree:
     conda: "envs/usher.yaml"
     input:
         tree="results/{segment}/{subtype}/final_tree.pb.gz",
+        # See convert_to_taxonium: nothing derived from the final tree ships
+        # until the gate has passed.
+        check="results/{segment}/{subtype}/reroot_sequence_check.txt",
         samples="results/{segment}/{subtype}/geographic_trees/{geo_group}_samples.txt"
     output:
         "results/{segment}/{subtype}/geographic_trees/{geo_group}_tree.pb.gz"
@@ -816,7 +832,10 @@ rule convert_geographic_subtree_to_taxonium:
 rule extract_final_newick:
     conda: "envs/usher.yaml"
     input:
-        tree="results/{segment}/{subtype}/final_tree.pb.gz"
+        tree="results/{segment}/{subtype}/final_tree.pb.gz",
+        # See convert_to_taxonium. This edge also gates both PastML rules,
+        # which read final_tree.nwk rather than the protobuf.
+        check="results/{segment}/{subtype}/reroot_sequence_check.txt"
     output:
         newick="results/{segment}/{subtype}/final_tree.nwk"
     log:
