@@ -26,6 +26,14 @@ is a faithful encoding of the alignment, not that it is rooted correctly. That
 the tree is rooted where config.yaml asked is asserted separately, here via
 --expect-root and in reroot_newick.py; do not read a pass here as confirming it.
 
+Nor does it see ref_nuc. `matUtils extract -S` renders a path from par_nuc and
+mut_nuc only, so the ref_nuc annotations rebase_mat_root.py repoints are
+invisible here -- a rebase that repointed them wrongly would still pass. What
+is checked is the consequence that matters: --final-origin reads
+final_tree_root.fasta and reconstructs the origin's offset from the reference
+independently of anything rebase_mat_root.py recorded, so a wrong root sequence
+does surface.
+
 Sites the input alignment leaves uncalled are excluded. faToVcf encodes a gap
 as missing data rather than as an allele, because a MAT stores substitutions
 only; the imputed base is then filled in by parsimony from the parent, so it

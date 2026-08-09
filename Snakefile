@@ -529,11 +529,12 @@ rule create_final_mat:
     shell:
         # usher rather than matOptimize, because this step must preserve the
         # rooting reroot_newick just established. matOptimize normalises the
-        # tree at load even with -N 0, and a reroot target whose terminal branch
-        # carries no mutations -- its sequence equals its parent's -- has nothing
-        # holding it at the root, so it gets collapsed away and reattached by
-        # parsimony. NA/N1's EPI_ISL_5878 is exactly that case: branch length 0,
-        # where the other 13 targets run 7-88. usher keeps the topology as given.
+        # tree at load even with -N 0 and does not preserve the input rooting.
+        # Empirically it survives only where the reroot target's terminal branch
+        # carries mutations: NA/N1's EPI_ISL_5878 is the one target of 14 whose
+        # branch is 0 (the others run 6-87 here), and the one that lost its
+        # rooting -- its root landed 54 mutations away, 56 substitutions from
+        # the intended root sequence. usher keeps the topology as given.
         """
         if [ -n "{params.new_root}" ]; then
             TMPD=$(mktemp -d)

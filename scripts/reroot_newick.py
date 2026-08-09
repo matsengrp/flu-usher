@@ -1,19 +1,21 @@
 """
 Reroot a newick tree at a named leaf, using it as an outgroup.
 
-Replaces `matUtils extract -y`, which reroots by rebasing the MAT into the new
-root's coordinate frame: the new root is written with zero mutations, so the
-file no longer records how that root differs from the reference. The result is
-self-consistent -- every branch's parent-to-child mutations are correct, and it
-reads correctly if you know the new root's sequence -- but it carries two
-costs. It refuses outright when the pre-reroot root already carries mutations,
-which is what broke HA/H3, and the frame shift is implicit: nothing in the
-artifact records it, so any consumer pairing final_tree.pb.gz with
+Replaces `matUtils extract -y`, which reroots by moving the MAT's origin onto
+the new root: that root is written with zero mutations, so the file no longer
+records how it differs from the reference. The result is self-consistent --
+every branch's parent-to-child mutations are correct, and it reads correctly if
+you know the new root's sequence -- but it carries two costs. It refuses
+outright when the pre-reroot root already carries mutations, which is what
+broke HA/H3, and the move of origin is implicit: nothing in the artifact
+records it, so any consumer pairing final_tree.pb.gz with
 curated_reference.fasta silently misreads it. See issue #49.
 
-Rerooting the newick instead leaves mutation assignment to matOptimize, which
-reads it off the alignment, so the MAT stays in the reference's frame and needs
-no reinterpretation. matUtils' own log confirms the topology semantics match:
+Rerooting the newick instead leaves mutation assignment to `usher`, which reads
+it off the alignment, so the MAT stays recorded against the reference and needs
+no reinterpretation. (Not matOptimize: create_final_mat must use usher, because
+matOptimize would collapse the very branch this rerooting depends on -- see the
+comment on that rule.) matUtils' own log confirms the topology semantics match:
 "New root was a leaf node; retaining it as leaf node on new root internal node"
 is what set_outgroup does with a leaf.
 """
@@ -83,8 +85,8 @@ def main():
         sys.exit(1)
 
     # sampled_tree.nh carries no branch lengths; ete3 invents dist=1.0 and writes
-    # them out. Inert -- matOptimize recomputes lengths from the VCF, and the
-    # current pipeline already feeds it a length-free newick.
+    # them out. Inert -- usher recomputes lengths as mutation counts from the
+    # VCF, and the current pipeline already feeds it a length-free newick.
     tree.write(outfile=args.output, format=1)
     logger.info(
         f"Rerooted {n_leaves} leaves at '{args.root}' -> {args.output}"
