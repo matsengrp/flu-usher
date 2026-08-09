@@ -17,7 +17,7 @@ conda env create -f environment.yml
 conda activate flu-usher
 ```
 
-Per-step dependencies are managed via separate conda environments in `envs/` (fatovcf, historydag, larch, nextclade, pastml, python, taxonium, usher). Snakemake creates and activates these automatically when run with `--use-conda`.
+Per-step dependencies are managed via separate conda environments in `envs/` (ete3, fatovcf, historydag, larch, nextclade, pastml, python, taxonium, usher). Snakemake creates and activates these automatically when run with `--use-conda`.
 
 ### Running the Pipeline
 ```bash
@@ -49,10 +49,11 @@ snakemake --cores 8 --use-conda <target> --forcerun <rule_name>
 
 # `--rerun-triggers mtime` narrows the default trigger set (mtime, params,
 # input, software-env, code) down to mtime alone. That disables params-based
-# invalidation, and seven rules read config.yaml values through `params:`
+# invalidation, and six rules read config.yaml values through `params:`
 # without declaring config.yaml as an input -- create_newick's tree_sample_seed,
 # curate_and_extract_coding_seqs' max_frac_gaps/max_frac_ambig,
-# parse_gisaid_data's segment and subtype lists, and the four root/reroot rules.
+# parse_gisaid_data's segment and subtype lists, and the three root rules
+# (create_root_samples_file, extract_root_mutations, create_root_fasta).
 # Under mtime-only, editing any of those in config.yaml leaves the affected
 # outputs stale with no warning. Use it for a quick dry run, not to decide
 # whether real work is up to date.
@@ -90,7 +91,9 @@ results/
 │   │   ├── larch_merged_dag.pb
 │   │   ├── trimmed_dag.pb
 │   │   ├── sampled_tree.{nh,pb.gz}
+│   │   ├── rerooted_tree.nh                     # only where `reroot` is configured
 │   │   ├── final_tree.{pb.gz,jsonl.gz}
+│   │   ├── reroot_sequence_check.txt            # gate report; seqcheck/ inputs are temp()
 │   │   ├── geographic_trees/
 │   │   │   ├── {geo_group}_samples.txt
 │   │   │   ├── {geo_group}_tree.pb.gz
@@ -139,6 +142,8 @@ results/
    - `randomize_alignment.py`: Creates randomized versions of alignments for multiple tree builds
    - `trim_dag.py`: Trims suboptimal trees from merged DAGs
    - `convert_DAG_protobuf_to_newick_samples.py`: Samples representative trees from DAGs
+   - `reroot_newick.py`: Reroots a newick at a named leaf via ete3 `set_outgroup`; validates the target exists, is unique, is a leaf, and ends up at the root
+   - `check_tree_sequences.py`: Asserts the MAT stayed in the reference's coordinate frame across rerooting, and that the final tree is rooted at the configured target
    - `create_root_samples_file.py`: Creates sample files for root sequence extraction
    - `extract_root_sequence.py`: Infers root sequences from tree mutations
    - `simplified_host_classifier.py`: Host classification logic (used by augment_metadata.py)
@@ -147,7 +152,7 @@ results/
    - `prepare_host_annotation.py`: Builds the global 2-column (isolate_id, host_group) CSV consumed by PastML
    - `prepare_subtype_annotation.py`: Builds the global 2-column (isolate_id, subtype) CSV consumed by PastML, normalizing the raw GISAID `subtype` ("A / H5N1") to `H*N*` form inline
    - `utils.py`: Shared helpers imported by the above — `open_sequence_file()` for plain/gz/xz IO, `setup_logging()`, `sanitize_id()`, and the GFF parsing used to derive coding coordinates
-   - `test_curate_and_extract_coding_seqs.py`: unittest suite for the curation logic
+   - `test_curate_and_extract_coding_seqs.py`, `test_parse_gisaid_data.py`, `test_create_samples_file.py`, `test_check_tree_sequences.py`, `test_reroot_newick.py`: unittest suites
 
 4. **notebooks/**: Jupyter notebooks for analysis and development
    - `analyze_alignments.ipynb`: Analyzes sequence statistics across segments/subtypes
@@ -169,7 +174,7 @@ results/
 12. **Trim DAG** → Removes suboptimal trees from merged DAG
 13. **Sample Tree** → Samples a representative tree from trimmed DAG
 14. **Create MAT Protobuf** → Converts sampled tree to MAT protobuf format
-15. **Reroot Tree** → Optionally reroots tree at specified node (matUtils extract)
+15. **Reroot Tree** → Where `reroot` is configured, reroots the *newick* at the named leaf with ete3 `set_outgroup` (`reroot_newick`), then rebuilds the MAT from the alignment with `matOptimize -N 0` (`create_final_mat`), which keeps it in the reference's coordinate frame. Combinations with no configured reroot symlink `final_tree.pb.gz` to `sampled_tree.pb.gz`. Replaced `matUtils extract -y`, which rebased the MAT into the new root's frame and refused outright when the pre-reroot root carried a mutation (issue #49). `check_tree_sequences` then guards that the MAT stayed in the reference's frame, and asserts the tree is rooted where config asked — the sequence comparison alone cannot tell, since both trees are `matOptimize` products of the same VCF and so agree for any topology.
 16. **Create Root Sequence** → Infers root sequence from tree or uses reference
 17. **Augment Metadata** → Adds host_group, geographic_group, and temporal_group columns
 18. **Extract Subtrees** → Creates subtrees for each configured geographic region (matUtils extract)
@@ -188,7 +193,7 @@ The pipeline expects GISAID data in each input directory:
 
 ### Important Notes
 
-- Tests live in `scripts/test_curate_and_extract_coding_seqs.py` (94 unittest tests covering the curation and coding-sequence extraction logic). Run them with `python -m unittest test_curate_and_extract_coding_seqs` from within `scripts/`. No linting setup currently exists, and the other 14 script modules are untested.
+- Tests live in five `scripts/test_*.py` modules (135 unittest tests). Run them with `python -m unittest discover` from within `scripts/`. Under `envs/python.yaml` that reports `OK (skipped=7)`: `test_reroot_newick.py` is `skipIf`-guarded because ete3 lives in its own env, so run it separately under `envs/ete3.yaml` to actually exercise those 7 — `OK (skipped=N)` otherwise reads like a pass. No linting setup currently exists, and 11 of the 16 script modules are untested.
 - The pipeline uses compressed outputs (.xz, .gz) to save disk space
 - All logs are saved in the `logs/` directory organized by segment/subtype
 - The pipeline can process multiple influenza subtypes simultaneously
