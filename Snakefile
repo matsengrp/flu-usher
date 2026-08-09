@@ -444,8 +444,19 @@ rule create_mat_protobuf:
     log:
         "logs/{segment}/{subtype}/create_mat_protobuf.log"
     shell:
+        # usher, not matOptimize: this step annotates a fixed topology, it does
+        # not search for a better one. matOptimize is a parsimony optimiser, and
+        # parsimony is an unrooted criterion, so it normalises the tree at load
+        # -- collapsing zero-mutation branches -- even under -N 0. That discards
+        # the rooting, which broke NA/N1 (see create_final_mat). usher takes the
+        # topology as authoritative. -d gets a private scratch dir because usher
+        # writes final-tree.nh beside its output, which would otherwise collide
+        # with the other MAT rule writing into the same combination directory.
         """
-        matOptimize -t {input.nh_file} -v {input.vcf_file} -o {output.protobuf_name} -N 0 &> {log}
+        TMPD=$(mktemp -d)
+        trap "rm -rf $TMPD" EXIT
+        usher -t {input.nh_file} -v {input.vcf_file} \
+            -d $TMPD -o $PWD/{output.protobuf_name} &> {log}
         """
 
 def reroot_target(wildcards):
@@ -510,9 +521,18 @@ rule create_final_mat:
     log:
         "logs/{segment}/{subtype}/reroot.log"
     shell:
+        # usher rather than matOptimize, because this step must preserve the
+        # rooting reroot_newick just established. matOptimize normalises the
+        # tree at load even with -N 0, and a reroot target whose terminal branch
+        # carries no mutations -- its sequence equals its parent's -- has nothing
+        # holding it at the root, so it gets collapsed away and reattached by
+        # parsimony. NA/N1's EPI_ISL_5878 is exactly that case: branch length 0,
+        # where the other 13 targets run 7-88. usher keeps the topology as given.
         """
         if [ -n "{params.new_root}" ]; then
-            matOptimize -t {input.tree} -v {input.vcf} -o {output} -N 0 &> {log}
+            TMPD=$(mktemp -d)
+            trap "rm -rf $TMPD" EXIT
+            usher -t {input.tree} -v {input.vcf} -d $TMPD -o $PWD/{output} &> {log}
         else
             ln -sf $(basename {input.tree}) {output} \
             && echo "Created symlink (no rerooting specified)" > {log}
