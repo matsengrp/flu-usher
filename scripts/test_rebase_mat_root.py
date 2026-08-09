@@ -1,7 +1,11 @@
 """Tests for rebase_mat_root.py.
 
-Only the pure helpers are covered here; the protobuf round-trip needs the MAT
-schema, which lives in envs/taxonium, and is exercised by the pipeline itself.
+Covers the helpers and the rebase itself, via SimpleNamespace stand-ins for the
+mutation messages -- rebase_onto_root() takes anything with .mutation lists, so
+it needs neither the compiled schema (which lives in envs/taxonium) nor a real
+protobuf. What is still uncovered here is the file-level round trip: load_mat,
+save_mat, and that the fields this script never touches (condensed_nodes,
+metadata) survive serialization. Those are exercised only by the pipeline.
 """
 import os
 import tempfile
@@ -9,7 +13,8 @@ import unittest
 from types import SimpleNamespace
 
 from rebase_mat_root import (NUCLEOTIDES, read_reference, rebase_onto_root,
-                             root_sequence, zero_root_branch_length)
+                             root_branch_length, root_sequence,
+                             zero_root_branch_length)
 
 
 def mutation(position, par_nuc, *mut_nuc):
@@ -172,6 +177,29 @@ class RebaseOntoRootTestCase(unittest.TestCase):
         self.assertEqual((moved, repointed), ({}, 0))
         self.assertEqual([(m.position, m.ref_nuc, m.par_nuc) for n in self.nodes
                           for m in n.mutation], snapshot)
+
+
+class RootBranchLengthTestCase(unittest.TestCase):
+    """The newick's independent statement of the root's mutation count."""
+
+    def test_reads_the_root_branch_length(self):
+        self.assertEqual(root_branch_length("(a:1,(b:2,c:3):4):113;"), 113)
+
+    def test_zero(self):
+        self.assertEqual(root_branch_length("(a:1,b:2):0;"), 0)
+
+    def test_named_root(self):
+        self.assertEqual(root_branch_length("(a:1,b:2)node_1:9;"), 9)
+
+    def test_absent_branch_length_is_none(self):
+        self.assertIsNone(root_branch_length("(a:1,b:2);"))
+
+    def test_non_integer_is_none(self):
+        """Only usher's mutation counts are meaningful; floats are not ours."""
+        self.assertIsNone(root_branch_length("(a:1,b:2):0.5;"))
+
+    def test_non_newick_is_none(self):
+        self.assertIsNone(root_branch_length("nonsense"))
 
 
 class NucleotideEncodingTestCase(unittest.TestCase):

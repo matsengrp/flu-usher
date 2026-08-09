@@ -90,6 +90,26 @@ def zero_root_branch_length(newick):
     return head + tail + terminator
 
 
+def root_branch_length(newick):
+    """The root's own branch length, or None if it carries none.
+
+    Branch lengths in a MAT newick are mutation counts, so this is a second,
+    independent encoding of len(node_mutations[0].mutation) -- which is what
+    makes it useful for checking that node_mutations[0] really is the root.
+    """
+    text = newick.rstrip().rstrip(";")
+    close = text.rfind(")")
+    if close == -1:
+        return None
+    tail = text[close + 1:]
+    if ":" not in tail:
+        return None
+    try:
+        return int(tail.rsplit(":", 1)[1])
+    except ValueError:
+        return None
+
+
 def root_sequence(reference, root_mutations):
     """Apply the root's mutation list to the reference, 1-based positions."""
     seq = list(reference)
@@ -172,6 +192,21 @@ def main():
         sys.exit(1)
 
     root = mat.node_mutations[0]
+
+    # node_mutations is written in newick DFS order, so index 0 is the root.
+    # That is usher's convention, not something the schema enforces, and every
+    # position this script writes depends on it. The newick states the root's
+    # mutation count independently, as its branch length, so the two encodings
+    # must agree -- verified to hold across all 16 combinations.
+    declared = root_branch_length(mat.newick)
+    if declared is not None and declared != len(root.mutation):
+        logger.error(
+            f"node_mutations[0] carries {len(root.mutation)} mutations but the "
+            f"newick gives the root a branch length of {declared}; it may not "
+            "be the root"
+        )
+        sys.exit(1)
+
     logger.info(f"Root carries {len(root.mutation)} mutations vs the reference")
 
     # Validates the root's mutations against the reference before anything is
