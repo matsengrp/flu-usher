@@ -17,7 +17,7 @@ conda env create -f environment.yml
 conda activate flu-usher
 ```
 
-Per-step dependencies are managed via separate conda environments in `envs/` (ete3, fatovcf, historydag, larch, nextclade, pastml, python, taxonium, usher). Snakemake creates and activates these automatically when run with `--use-conda`.
+Per-step dependencies are managed via separate conda environments in `envs/` (ete3, fatovcf, historydag, nextclade, pastml, python, taxonium, usher; larch is not among them -- see the note on `tree_to_dag`). Snakemake creates and activates these automatically when run with `--use-conda`.
 
 ### Running the Pipeline
 ```bash
