@@ -515,7 +515,7 @@ rule create_final_mat:
         vcf="results/{segment}/{subtype}/randomized_0/msa.vcf",
         config="config.yaml"
     output:
-        "results/{segment}/{subtype}/final_tree.pb.gz"
+        "results/{segment}/{subtype}/reference_origin_tree.pb.gz"
     params:
         new_root=reroot_target
     log:
@@ -537,6 +537,37 @@ rule create_final_mat:
             ln -sf $(basename {input.tree}) {output} \
             && echo "Created symlink (no rerooting specified)" > {log}
         fi
+        """
+
+
+# Move the tree's origin from the reference onto its own root, so the root
+# carries no mutations and its sequence ships alongside. Pure bookkeeping: every
+# branch below the root already records a parent-to-child change, independent of
+# what the origin is, so only the root's own mutation list and the ref_nuc
+# annotations move. Applied to all 16 combinations, rerooted or not, so
+# final_tree.pb.gz means the same thing everywhere.
+rule rebase_final_mat:
+    conda: "envs/taxonium.yaml"
+    input:
+        mat="results/{segment}/{subtype}/reference_origin_tree.pb.gz",
+        reference="results/{segment}/{subtype}/curated_reference.fasta",
+        script=script_deps("rebase_mat_root.py")
+    output:
+        mat="results/{segment}/{subtype}/final_tree.pb.gz",
+        fasta="results/{segment}/{subtype}/final_tree_root.fasta"
+    params:
+        name=lambda w: f"root_{w.segment}_{w.subtype}"
+    log:
+        "logs/{segment}/{subtype}/rebase_final_mat.log"
+    shell:
+        """
+        python scripts/rebase_mat_root.py \
+            --input-mat {input.mat} \
+            --reference {input.reference} \
+            --output-mat {output.mat} \
+            --output-fasta {output.fasta} \
+            --name {params.name} \
+            &> {log}
         """
 
 
@@ -575,6 +606,7 @@ rule check_tree_sequences:
         final_paths="results/{segment}/{subtype}/seqcheck/final_paths.tsv",
         newick="results/{segment}/{subtype}/seqcheck/final_tree.nwk",
         reference="results/{segment}/{subtype}/curated_reference.fasta",
+        final_origin="results/{segment}/{subtype}/final_tree_root.fasta",
         vcf="results/{segment}/{subtype}/randomized_0/msa.vcf",
         config="config.yaml",
         script=script_deps("check_tree_sequences.py")
@@ -592,6 +624,7 @@ rule check_tree_sequences:
             --reference {input.reference} \
             --input-vcf {input.vcf} \
             --final-newick {input.newick} \
+            --final-origin {input.final_origin} \
             --expect-root '{params.new_root}' \
             --output {output} \
             &> {log}

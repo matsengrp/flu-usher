@@ -2,34 +2,37 @@
 Assert that rerooting did not change any sequence stored in the tree.
 
 Rerooting moves the root and redistributes mutations along the backbone, but the
-sequence the tree implies for each sample, read against the reference, must not
-change. `matUtils extract -y` broke that: it rebased the MAT into the new root's
-coordinate frame, so sequences read against curated_reference.fasta came out
-shifted by the target's divergence from it (issue #49). The rebased tree was
-self-consistent and recoverable if you knew the new root's sequence, but nothing
-in the artifact recorded the shift. This check is the standing guard that the
-MAT stays in the reference's frame.
+sequence the tree implies for each sample must not change. `matUtils extract -y`
+broke that: it re-recorded the tree against the new root and wrote that root with
+zero mutations, so the file no longer said how its origin differed from
+curated_reference.fasta. The result was self-consistent and recoverable if you
+knew the new root's sequence, but nothing in the artifact carried it, so any
+consumer pairing the tree with the reference misread it (issue #49).
 
 Compares the sequences implied by sampled_tree.pb.gz (pre-reroot) and
 final_tree.pb.gz (post-reroot), via the root-to-tip mutation paths that
 `matUtils extract -S` writes, and exits nonzero if any sample differs.
 
-What this does and does not prove. Both trees are matOptimize products of the
-same VCF, and matOptimize assigns mutations that reproduce the input genotypes
-exactly, so composing a root-to-tip path returns the alignment's genotype for
-any topology. This check therefore passes on a randomly scrambled tree; it is a
-coordinate-frame guard, not a rerooting-correctness guard. It catches a MAT that
-is not in the reference's frame -- the #49 bug -- and nothing else. That the
-tree is rooted where config.yaml asked is asserted separately, here via
+Every sequence is a set of positions; the trees only disagree about which
+sequence the origin is. Where the final tree has been rebased onto its own root
+(rebase_mat_root.py), --final-origin supplies that sequence and both sides are
+expressed against the reference before comparison.
+
+What this does and does not prove. Both trees are built by usher from the same
+VCF, and usher assigns mutations that reproduce the input genotypes exactly, so
+composing a root-to-tip path returns the alignment's genotype for any topology.
+This check therefore passes on a randomly scrambled tree: it verifies the tree
+is a faithful encoding of the alignment, not that it is rooted correctly. That
+the tree is rooted where config.yaml asked is asserted separately, here via
 --expect-root and in reroot_newick.py; do not read a pass here as confirming it.
 
 Sites the input alignment leaves uncalled are excluded. faToVcf encodes a gap
 as missing data rather than as an allele, because a MAT stores substitutions
-only; matOptimize then fills those positions in by parsimony from the parent,
-so the imputed base legitimately moves when the root moves. Those bases were
-never observed, and asserting that a guess is stable under rerooting is not a
-property worth having. The count of excluded sites is reported so a combo with
-a large gappy region cannot quietly hollow out the check.
+only; the imputed base is then filled in by parsimony from the parent, so it
+legitimately moves when the root moves. Those bases were never observed, and
+asserting that a guess is stable under rerooting is not a property worth having.
+The count of excluded sites is reported so a combo with a large gappy region
+cannot quietly hollow out the check.
 """
 import argparse
 import sys
@@ -52,13 +55,19 @@ def read_reference(path):
     return {i: base.upper() for i, base in enumerate("".join(seq), start=1)}
 
 
-def compose(path_field, ref):
+def compose(path_field, ref, origin_diff=None):
     """Collapse a root-to-tip mutation path into {position: allele != reference}.
 
     `matUtils extract -S` writes space-separated `node:MUT,MUT` chunks in
     root-to-tip order, where each mutation is <parent base><position><new base>.
     Later chunks override earlier ones at the same position, so a mutation and
     its back-mutation cancel and drop out.
+
+    A rebased tree records its mutations against its own root rather than the
+    reference (see rebase_mat_root.py), so the two trees being compared can have
+    different origins. `origin_diff` carries {position: base} wherever this
+    tree's origin differs from `ref`, letting both sides be expressed against
+    `ref` and stay comparable. Empty for a tree already on the reference.
     """
     alleles = {}
     for chunk in path_field.split():
@@ -68,22 +77,28 @@ def compose(path_field, ref):
                 continue
             pos = int(mut[1:-1])
             alleles[pos] = mut[-1]
+    if origin_diff:
+        # Positions where the origin already differs from ref and the path says
+        # nothing: the sample inherits the origin's base, which is a difference.
+        for pos, base in origin_diff.items():
+            alleles.setdefault(pos, base)
     return {p: a for p, a in alleles.items() if ref.get(p) != a}
 
 
-def read_paths(path, ref, keep=None):
+def read_paths(path, ref, keep=None, origin_diff=None):
     """Yield (sample, genotype dict) from a matUtils -S file.
 
     `keep` restricts to a subset of sample names, so the second pass can hold
     full genotypes for the handful of samples that disagreed without ever
-    materialising them for the whole tree.
+    materialising them for the whole tree. `origin_diff` is passed through to
+    compose() so a rebased tree is reported against `ref` like any other.
     """
     with open(path) as handle:
         for line in handle:
             sample, _, path_field = line.rstrip("\n").partition("\t")
             if not sample or (keep is not None and sample not in keep):
                 continue
-            yield sample, compose(path_field, ref)
+            yield sample, compose(path_field, ref, origin_diff)
 
 
 def genotype_key(genotype):
@@ -168,6 +183,10 @@ def main():
     parser.add_argument("--output", required=True, help="Report file")
     parser.add_argument("--final-newick", default=None,
                         help="newick of final_tree.pb.gz, for the root check")
+    parser.add_argument("--final-origin", default=None,
+                        help="FASTA the final tree's mutations are recorded "
+                             "against, if it was rebased onto its root; "
+                             "defaults to --reference")
     parser.add_argument("--expect-root", default="",
                         help="configured reroot target; empty if not rerooted")
     args = parser.parse_args()
@@ -189,6 +208,25 @@ def main():
         logger.info(f"Final tree is rooted at '{args.expect_root}'")
 
     ref = read_reference(args.reference)
+
+    # The final tree may have been rebased onto its own root, in which case its
+    # mutations are recorded against that sequence rather than the reference.
+    # Express both trees against the reference so they stay comparable; this is
+    # the whole reason rebasing is bookkeeping rather than a change of content.
+    final_origin_diff = {}
+    if args.final_origin:
+        origin = read_reference(args.final_origin)
+        if len(origin) != len(ref):
+            logger.error(
+                f"final origin spans {len(origin)} positions, reference "
+                f"{len(ref)}"
+            )
+            sys.exit(1)
+        final_origin_diff = {p: b for p, b in origin.items() if ref.get(p) != b}
+        logger.info(
+            f"Final tree is rebased onto its root, which differs from the "
+            f"reference at {len(final_origin_diff)} positions"
+        )
     logger.info(f"Reference spans {len(ref)} positions")
 
     # First pass keeps one hash per sample rather than a genotype map, so the
@@ -196,7 +234,8 @@ def main():
     before = {s: hash(genotype_key(g)) for s, g in read_paths(args.sampled_paths, ref)}
     candidates = set()
     seen = set()
-    for sample, genotype in read_paths(args.final_paths, ref):
+    for sample, genotype in read_paths(args.final_paths, ref,
+                                       origin_diff=final_origin_diff):
         seen.add(sample)
         if sample not in before or before[sample] != hash(genotype_key(genotype)):
             candidates.add(sample)
@@ -230,7 +269,8 @@ def main():
     excluded_sites = 0
     if candidates:
         sampled = dict(read_paths(args.sampled_paths, ref, keep=candidates))
-        final = dict(read_paths(args.final_paths, ref, keep=candidates))
+        final = dict(read_paths(args.final_paths, ref, keep=candidates,
+                                origin_diff=final_origin_diff))
         positions = set()
         for sample in candidates:
             a, b = sampled[sample], final[sample]

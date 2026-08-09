@@ -171,5 +171,32 @@ class EndToEndTestCase(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
 
 
+class ComposeWithRebasedOriginTestCase(unittest.TestCase):
+    """A tree rebased onto its own root is reported against the reference."""
+
+    def setUp(self):
+        self.ref = {i: b for i, b in enumerate("ACGTACGTAC", start=1)}
+        # Root differs from the reference at position 1 (A -> G).
+        self.origin_diff = {1: "G"}
+
+    def test_origin_difference_shows_up_with_an_empty_path(self):
+        """A sample with no mutations still inherits the root's base."""
+        self.assertEqual(compose("", self.ref, self.origin_diff), {1: "G"})
+
+    def test_path_overrides_the_origin(self):
+        """A back-mutation to the reference base cancels the origin difference."""
+        self.assertEqual(compose("node_1:G1A", self.ref, self.origin_diff), {})
+
+    def test_origin_and_path_combine(self):
+        got = compose("node_1:G3T", self.ref, self.origin_diff)
+        self.assertEqual(got, {1: "G", 3: "T"})
+
+    def test_matches_the_unrebased_tree(self):
+        """The point of the flag: same sequence, two ways of recording it."""
+        on_reference = compose("node_1:A1G,G3T", self.ref)
+        on_root = compose("node_1:G3T", self.ref, self.origin_diff)
+        self.assertEqual(on_reference, on_root)
+
+
 if __name__ == "__main__":
     unittest.main()

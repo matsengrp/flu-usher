@@ -92,7 +92,9 @@ results/
 │   │   ├── trimmed_dag.pb
 │   │   ├── sampled_tree.{nh,pb.gz}
 │   │   ├── rerooted_tree.nh                     # only where `reroot` is configured
+│   │   ├── reference_origin_tree.pb.gz          # MAT before rebasing onto its root
 │   │   ├── final_tree.{pb.gz,jsonl.gz}
+│   │   ├── final_tree_root.fasta                # the root sequence; final_tree's origin
 │   │   ├── reroot_sequence_check.txt            # gate report; seqcheck/ inputs are temp()
 │   │   ├── geographic_trees/
 │   │   │   ├── {geo_group}_samples.txt
@@ -143,7 +145,8 @@ results/
    - `trim_dag.py`: Trims suboptimal trees from merged DAGs
    - `convert_DAG_protobuf_to_newick_samples.py`: Samples representative trees from DAGs
    - `reroot_newick.py`: Reroots a newick at a named leaf via ete3 `set_outgroup`; validates the target exists, is unique, is a leaf, and ends up at the root
-   - `check_tree_sequences.py`: Asserts the MAT stayed in the reference's coordinate frame across rerooting, and that the final tree is rooted at the configured target
+   - `check_tree_sequences.py`: Asserts no sample's sequence changed across rerooting, and that the final tree is rooted at the configured target
+   - `rebase_mat_root.py`: Moves a MAT's origin from the reference onto its own root, emptying the root's mutation list and writing the root sequence out
    - `create_root_samples_file.py`: Creates sample files for root sequence extraction
    - `extract_root_sequence.py`: Infers root sequences from tree mutations
    - `simplified_host_classifier.py`: Host classification logic (used by augment_metadata.py)
@@ -177,14 +180,15 @@ results/
 15. **Reroot Tree** → Where `reroot` is configured, reroots the *newick* at the named leaf with ete3 `set_outgroup` (`reroot_newick`), then rebuilds the MAT from the alignment with `usher` (`create_final_mat`), which keeps it in the reference's coordinate frame. Combinations with no configured reroot symlink `final_tree.pb.gz` to `sampled_tree.pb.gz`. Replaced `matUtils extract -y`, which rebased the MAT into the new root's frame and refused outright when the pre-reroot root carried a mutation (issue #49). `check_tree_sequences` then guards that the MAT stayed in the reference's frame, and asserts the tree is rooted where config asked — the sequence comparison alone cannot tell, since both trees are built from the same VCF and so agree for any topology.
 
     Both MAT-building rules (`create_mat_protobuf`, `create_final_mat`) use `usher`, not `matOptimize`. These steps annotate a fixed topology; they do not search for a better one. `matOptimize` is a parsimony optimiser, and parsimony is an *unrooted* criterion, so it normalises the tree at load — collapsing zero-mutation branches — even under `-N 0`, discarding the rooting. That silently broke NA/N1, whose reroot target `EPI_ISL_5878` has a terminal branch of length 0 (its sequence equals its parent's) where the other 13 targets run 7–88, so nothing held it at the root. Switching both rules to `usher` fixed it and moved `curated_root.fasta` by one position in 2 of 16 combinations. `matOptimize` remains correct for `optimize_tree`, which really is topology optimisation.
-16. **Create Root Sequence** → Infers root sequence from tree or uses reference
-17. **Augment Metadata** → Adds host_group, geographic_group, and temporal_group columns
-18. **Extract Subtrees** → Creates subtrees for each configured geographic region (matUtils extract)
-19. **Infer Per-Node Host States** → Runs PastML / DOWNPASS on each `final_tree.nwk` to reconstruct `host_group` at every node; outputs `{segment}/{subtype}/host_ancestral/combined_ancestral_states.tab`
-20. **Infer Per-Node Subtype States** → Runs PastML / DOWNPASS on each `final_tree.nwk` to reconstruct `subtype` (`H*N*`, normalized from the raw GISAID `subtype` inside `prepare_subtype_annotation.py`) at every node; outputs `{segment}/{subtype}/subtype_ancestral/combined_ancestral_states.tab`. On HA per-subtype trees the H is fixed and only the inferred N partner varies (analogously for NA trees); on internal-segment trees neither letter is constrained, so the full `H*N*` can vary along the tree.
-21. **Create Visualizations** → Generates Taxonium format for full tree and geographic subtrees
-22. **Execute Notebooks** → Runs the notebooks under `notebooks/` once all 16 `final_tree.jsonl.gz` files exist; writes `results/notebooks/{notebook}.done` sentinels
-23. **Record Input md5sums** → Writes `results/input_data_md5sums.txt`, a provenance manifest over every FASTA/XLS file discovered under the configured `input_dirs`
+16. **Rebase MAT onto its Root** → `rebase_final_mat` moves the tree's origin from `curated_reference.fasta` onto the tree's own root, so the root carries no mutations and its sequence ships as `final_tree_root.fasta`. Reconstructing a sample from `final_tree.pb.gz` therefore starts from that file, not from the curated reference. This is pure bookkeeping: every branch below the root already records a parent-to-child change and is unaffected, so only the root's own mutation list (emptied) and each mutation's `ref_nuc` annotation (repointed) change. It is the same operation `matUtils extract -y` performed, minus its two defects — refusing whenever the root carried mutations, and discarding the root sequence instead of emitting it, which is what made the shift silent in issue #49.
+17. **Create Root Sequence** → Infers root sequence from tree or uses reference
+18. **Augment Metadata** → Adds host_group, geographic_group, and temporal_group columns
+19. **Extract Subtrees** → Creates subtrees for each configured geographic region (matUtils extract)
+20. **Infer Per-Node Host States** → Runs PastML / DOWNPASS on each `final_tree.nwk` to reconstruct `host_group` at every node; outputs `{segment}/{subtype}/host_ancestral/combined_ancestral_states.tab`
+21. **Infer Per-Node Subtype States** → Runs PastML / DOWNPASS on each `final_tree.nwk` to reconstruct `subtype` (`H*N*`, normalized from the raw GISAID `subtype` inside `prepare_subtype_annotation.py`) at every node; outputs `{segment}/{subtype}/subtype_ancestral/combined_ancestral_states.tab`. On HA per-subtype trees the H is fixed and only the inferred N partner varies (analogously for NA trees); on internal-segment trees neither letter is constrained, so the full `H*N*` can vary along the tree.
+22. **Create Visualizations** → Generates Taxonium format for full tree and geographic subtrees
+23. **Execute Notebooks** → Runs the notebooks under `notebooks/` once all 16 `final_tree.jsonl.gz` files exist; writes `results/notebooks/{notebook}.done` sentinels
+24. **Record Input md5sums** → Writes `results/input_data_md5sums.txt`, a provenance manifest over every FASTA/XLS file discovered under the configured `input_dirs`
 
 ### Input Data Requirements
 
@@ -195,7 +199,7 @@ The pipeline expects GISAID data in each input directory:
 
 ### Important Notes
 
-- Tests live in five `scripts/test_*.py` modules (135 unittest tests). Run them with `python -m unittest discover` from within `scripts/`. Under `envs/python.yaml` that reports `OK (skipped=7)`: `test_reroot_newick.py` is `skipIf`-guarded because ete3 lives in its own env, so run it separately under `envs/ete3.yaml` to actually exercise those 7 — `OK (skipped=N)` otherwise reads like a pass. No linting setup currently exists, and 11 of the 16 script modules are untested.
+- Tests live in six `scripts/test_*.py` modules (150 unittest tests). Run them with `python -m unittest discover` from within `scripts/`. Under `envs/python.yaml` that reports `OK (skipped=7)`: `test_reroot_newick.py` is `skipIf`-guarded because ete3 lives in its own env, so run it separately under `envs/ete3.yaml` to actually exercise those 7 — `OK (skipped=N)` otherwise reads like a pass. No linting setup currently exists, and 11 of the 17 script modules are untested.
 - The pipeline uses compressed outputs (.xz, .gz) to save disk space
 - All logs are saved in the `logs/` directory organized by segment/subtype
 - The pipeline can process multiple influenza subtypes simultaneously
