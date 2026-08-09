@@ -352,6 +352,14 @@ rule optimize_tree:
         """
 
 # Convert optimized trees to DAGs
+# larch has no `conda:` directive, and snakemake --lint flags both rules for it.
+# That is accepted, not an oversight: larch is built from source into the main
+# flu-usher environment (environment.yml carries its build and runtime deps, not
+# larch itself), currently v0.1.3, built 2025-10-27. envs/larch.yaml used to sit
+# here pointing at the packaged larch-phylo, which is only 0.1.0 -- adopting it
+# would have silently downgraded the tree builder, so it was deleted rather than
+# wired up. Packaging larch properly is a separate change that has to be
+# validated against the trees it produces.
 rule tree_to_dag:
     input:
         tree="results/{segment}/{subtype}/randomized_{n}/opt_tree.pb.gz",
@@ -371,7 +379,8 @@ rule tree_to_dag:
             &> {log}
         """
 
-# Use larch to merge multiple DAGs into a single DAG
+# Use larch to merge multiple DAGs into a single DAG.
+# No `conda:` -- see the note on tree_to_dag.
 rule larch_merge:
     input:
         dags=expand("results/{{segment}}/{{subtype}}/randomized_{n}/dag.pb",
@@ -493,7 +502,6 @@ rule reroot_newick:
     conda: "envs/ete3.yaml"
     input:
         newick="results/{segment}/{subtype}/sampled_tree.nh",
-        config="config.yaml",
         script=script_deps("reroot_newick.py")
     output:
         "results/{segment}/{subtype}/rerooted_tree.nh"
@@ -516,8 +524,7 @@ rule create_final_mat:
     conda: "envs/usher.yaml"
     input:
         tree=final_mat_source,
-        vcf="results/{segment}/{subtype}/randomized_0/msa.vcf",
-        config="config.yaml"
+        vcf="results/{segment}/{subtype}/randomized_0/msa.vcf"
     output:
         "results/{segment}/{subtype}/reference_origin_tree.pb.gz"
     params:
@@ -616,7 +623,6 @@ rule check_tree_sequences:
         reference="results/{segment}/{subtype}/curated_reference.fasta",
         final_origin="results/{segment}/{subtype}/final_tree_root.fasta",
         vcf="results/{segment}/{subtype}/randomized_0/msa.vcf",
-        config="config.yaml",
         script=script_deps("check_tree_sequences.py")
     output:
         "results/{segment}/{subtype}/reroot_sequence_check.txt"
@@ -1008,7 +1014,6 @@ rule execute_analyze_metadata:
     conda: "envs/python.yaml"
     input:
         notebook="notebooks/analyze_metadata.ipynb",
-        config_file="config.yaml",
         metadata="results/combined_metadata_augmented.csv",
         trees=ALL_FINAL_TREES
     output:
@@ -1031,6 +1036,7 @@ rule execute_analyze_metadata:
 # manifest. Output lines follow the standard `md5sum` format:
 # "<hash>  <path>", one file per line.
 rule input_data_md5sums:
+    conda: "envs/python.yaml"
     input:
         INPUT_DATA_FILES
     output:
