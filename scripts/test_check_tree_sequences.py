@@ -37,6 +37,10 @@ class ComposeTestCase(unittest.TestCase):
         """A1G then G1A returns to reference, so the site must drop out."""
         self.assertEqual(compose("node_1:A1G node_2:G1A", self.ref), {})
 
+    def test_multi_digit_position(self):
+        """Pins the mut[1:-1] slice, which single-digit fixtures can't."""
+        self.assertEqual(compose("node_1:C10G", self.ref), {10: "G"})
+
     def test_later_chunk_overrides_earlier(self):
         self.assertEqual(compose("node_1:A1G node_2:G1C", self.ref), {1: "C"})
 
@@ -95,7 +99,7 @@ class EndToEndTestCase(unittest.TestCase):
         return path
 
     def run_check(self, sampled, final, vcf_rows="", newick=None,
-                  expect_root=None):
+                  expect_root=None, final_origin=None):
         args = [
             sys.executable, SCRIPT,
             "--sampled-paths", self.write("sampled.tsv", sampled),
@@ -108,14 +112,38 @@ class EndToEndTestCase(unittest.TestCase):
             args += ["--final-newick", self.write("final.nwk", newick)]
         if expect_root is not None:
             args += ["--expect-root", expect_root]
+        if final_origin is not None:
+            args += ["--final-origin", self.write("origin.fasta", final_origin)]
         return subprocess.run(args, capture_output=True, text=True,
                               cwd=os.path.dirname(SCRIPT))
+
+    def report(self):
+        """The report file's counters, parsed into a dict.
+
+        Exit code alone does not say the gate measured the right thing: a
+        script that always exited 0 while writing nonsense would satisfy every
+        passing case here. These assert on what it actually counted.
+        """
+        with open(os.path.join(self.tmp.name, "report.txt")) as handle:
+            counters = {}
+            for line in handle:
+                key, _, value = line.partition(":")
+                if value.strip().isdigit():
+                    counters[key.strip()] = int(value.strip())
+        return counters
 
     def test_identical_sequences_pass(self):
         sampled = "EPI_A\tnode_1:A1G\nEPI_B\tnode_1:A1G node_3:G3T\n"
         final = "EPI_A\tnode_9:A1G\nEPI_B\tnode_9:A1G node_8:G3T\n"
         result = self.run_check(sampled, final)
         self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.report(), {
+            "samples compared": 2,
+            "identical sequences": 2,
+            "differing sequences": 0,
+            "samples differing only at uncalled sites": 0,
+            "uncalled sites excluded": 0,
+        })
 
     def test_differing_called_site_fails(self):
         """The negative control: a real genotype change must exit nonzero."""
@@ -138,10 +166,29 @@ class EndToEndTestCase(unittest.TestCase):
         vcf_rows = "chr\t1\t.\tA\tG\t.\t.\t.\tGT\t.\t1\n"
         result = self.run_check(sampled, final, vcf_rows=vcf_rows)
         self.assertEqual(result.returncode, 0, result.stderr)
+        # Masked, not silently ignored: the report must say a site was excluded.
+        self.assertEqual(self.report()["uncalled sites excluded"], 1)
+        self.assertEqual(self.report()["samples differing only at uncalled sites"], 1)
+
+    def test_called_differing_site_in_the_vcf_still_fails(self):
+        """Separates 'no VCF row' from 'the VCF says this base was called'."""
+        sampled = "EPI_A\tnode_1:A1G\n"
+        final = "EPI_A\tnode_9:A1C\n"
+        vcf_rows = "chr\t1\t.\tA\tG\t.\t.\t.\tGT\t1\t1\n"
+        result = self.run_check(sampled, final, vcf_rows=vcf_rows)
+        self.assertEqual(result.returncode, 1)
 
     def test_sample_set_mismatch_fails(self):
         sampled = "EPI_A\tnode_1:A1G\nEPI_B\tnode_1:A1G\n"
         final = "EPI_A\tnode_9:A1G\n"
+        result = self.run_check(sampled, final)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("sample sets differ", result.stderr)
+
+    def test_extra_sample_in_final_tree_fails(self):
+        """The other half of the mismatch check, OR'd into the same branch."""
+        sampled = "EPI_A\tnode_1:A1G\n"
+        final = "EPI_A\tnode_9:A1G\nEPI_B\tnode_9:A1G\n"
         result = self.run_check(sampled, final)
         self.assertEqual(result.returncode, 1)
         self.assertIn("sample sets differ", result.stderr)
@@ -169,6 +216,34 @@ class EndToEndTestCase(unittest.TestCase):
         sampled = "EPI_A\tnode_1:A1G\n"
         result = self.run_check(sampled, sampled, expect_root="EPI_A")
         self.assertEqual(result.returncode, 1)
+
+    def test_rebased_origin_is_reconciled_end_to_end(self):
+        """The two trees record the same sequence against different origins.
+
+        The final tree is rebased onto a root that differs from the reference
+        at position 1, so its path omits the A1G the sampled tree records.
+        Same sequence, and the gate must see that through --final-origin.
+        """
+        sampled = "EPI_A\tnode_1:A1G node_2:G3T\n"
+        final = "EPI_A\tnode_9:G3T\n"
+        result = self.run_check(sampled, final,
+                                final_origin=">root\nGCGTACGTAC\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.report()["identical sequences"], 1)
+
+    def test_rebased_origin_does_not_mask_a_real_difference(self):
+        """The negative control: --final-origin must not paper over a change."""
+        sampled = "EPI_A\tnode_1:A1G node_2:G3T\n"
+        final = "EPI_A\tnode_9:G3C\n"
+        result = self.run_check(sampled, final,
+                                final_origin=">root\nGCGTACGTAC\n")
+        self.assertEqual(result.returncode, 1)
+
+    def test_origin_of_wrong_length_fails(self):
+        sampled = "EPI_A\tnode_1:A1G\n"
+        result = self.run_check(sampled, sampled, final_origin=">root\nACGT\n")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("positions", result.stderr)
 
 
 class ComposeWithRebasedOriginTestCase(unittest.TestCase):

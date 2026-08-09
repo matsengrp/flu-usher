@@ -8,8 +8,8 @@ import tempfile
 import unittest
 from types import SimpleNamespace
 
-from rebase_mat_root import (NUCLEOTIDES, read_reference, root_sequence,
-                             zero_root_branch_length)
+from rebase_mat_root import (NUCLEOTIDES, read_reference, rebase_onto_root,
+                             root_sequence, zero_root_branch_length)
 
 
 def mutation(position, par_nuc, *mut_nuc):
@@ -94,6 +94,84 @@ class RootSequenceTestCase(unittest.TestCase):
         with self.assertRaises(SystemExit) as cm:
             root_sequence(self.REFERENCE, [mutation(1, A)])
         self.assertEqual(cm.exception.code, 1)
+
+
+class RebaseOntoRootTestCase(unittest.TestCase):
+    """The bookkeeping itself: empty the root, repoint ref_nuc, touch nothing else.
+
+    The operation this module exists to perform, and the one a production run
+    was previously the first thing to exercise. Uses the same SimpleNamespace
+    stand-ins as the rest of the file, so it runs without the compiled schema.
+    """
+
+    def node(self, *mutations):
+        return SimpleNamespace(mutation=list(mutations))
+
+    def with_ref(self, position, ref_nuc, par_nuc, mut_nuc):
+        m = mutation(position, par_nuc, mut_nuc)
+        m.ref_nuc = ref_nuc
+        return m
+
+    def setUp(self):
+        # Root moves the origin at positions 1 (A->G) and 4 (T->C).
+        self.root = self.node(self.with_ref(1, A, A, G), self.with_ref(4, T, T, C))
+        # A descendant mutating at position 1, which the origin moved...
+        self.child = self.node(self.with_ref(1, A, G, T))
+        # ...and one at position 7, which it did not.
+        self.other = self.node(self.with_ref(7, G, G, A))
+        self.nodes = [self.root, self.child, self.other]
+
+    def test_root_mutation_list_is_emptied(self):
+        rebase_onto_root(self.nodes)
+        self.assertEqual(list(self.root.mutation), [])
+
+    def test_reports_the_positions_that_moved(self):
+        moved, _ = rebase_onto_root(self.nodes)
+        self.assertEqual(moved, {1: G, 4: C})
+
+    def test_repoints_ref_nuc_at_moved_positions(self):
+        rebase_onto_root(self.nodes)
+        self.assertEqual(self.child.mutation[0].ref_nuc, G)
+
+    def test_leaves_ref_nuc_alone_elsewhere(self):
+        rebase_onto_root(self.nodes)
+        self.assertEqual(self.other.mutation[0].ref_nuc, G)  # unchanged
+
+    def test_does_not_touch_par_nuc_or_mut_nuc(self):
+        """The claim that this is bookkeeping: no parent-to-child change moves."""
+        before = [(m.par_nuc, list(m.mut_nuc))
+                  for n in (self.child, self.other) for m in n.mutation]
+        rebase_onto_root(self.nodes)
+        after = [(m.par_nuc, list(m.mut_nuc))
+                 for n in (self.child, self.other) for m in n.mutation]
+        self.assertEqual(before, after)
+
+    def test_counts_every_repointed_annotation(self):
+        """Counts records, not positions: two nodes mutating at position 1.
+
+        Includes the root's own two, which are repointed and then deleted with
+        the rest of its list. So the logged count is of annotations touched,
+        not of annotations surviving in the output.
+        """
+        second = self.node(self.with_ref(1, A, G, C))
+        _, repointed = rebase_onto_root([self.root, self.child, second, self.other])
+        self.assertEqual(repointed, 4)  # root's pos 1 and 4, plus two children
+
+    def test_root_with_no_mutations_is_a_no_op(self):
+        nodes = [self.node(), self.child]
+        moved, repointed = rebase_onto_root(nodes)
+        self.assertEqual((moved, repointed), ({}, 0))
+        self.assertEqual(self.child.mutation[0].ref_nuc, A)
+
+    def test_is_idempotent(self):
+        """Rebasing an already-rebased tree changes nothing further."""
+        rebase_onto_root(self.nodes)
+        snapshot = [(m.position, m.ref_nuc, m.par_nuc) for n in self.nodes
+                    for m in n.mutation]
+        moved, repointed = rebase_onto_root(self.nodes)
+        self.assertEqual((moved, repointed), ({}, 0))
+        self.assertEqual([(m.position, m.ref_nuc, m.par_nuc) for n in self.nodes
+                          for m in n.mutation], snapshot)
 
 
 class NucleotideEncodingTestCase(unittest.TestCase):

@@ -49,6 +49,13 @@ class RerootNewickTestCase(unittest.TestCase):
         self.assertEqual(len(tree.children), 2)
         self.assertIn("c", [child.name for child in tree.children])
 
+    def test_duplicate_target_name_exits_nonzero(self):
+        """Two leaves named 'c' would silently reroot at whichever ete3 finds."""
+        result, out_path = self.run_script("((a,c)nodeA,b,c);", "c")
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(os.path.exists(out_path),
+                         "wrote a tree rooted at an arbitrary one of the two")
+
     def test_preserves_leaf_set(self):
         for newick, target in ((POLYTOMY_ROOT, "c"), (NESTED_POLYTOMY, "q")):
             with self.subTest(target=target):

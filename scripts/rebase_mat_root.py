@@ -127,6 +127,32 @@ def root_sequence(reference, root_mutations):
     return "".join(seq)
 
 
+def rebase_onto_root(node_mutations):
+    """Move the origin onto node_mutations[0], in place. Returns (moved, count).
+
+    `moved` is {position: allele} wherever the new origin differs from the old
+    one, taken from the root's own mutation list. Every mutation in the tree at
+    one of those positions has its ref_nuc repointed, because ref_nuc names the
+    origin's base and the origin just changed. par_nuc and mut_nuc are left
+    alone: they record a parent-to-child change, which is what it is regardless
+    of what the origin is. That asymmetry is the whole reason this is
+    bookkeeping rather than a change of content.
+
+    Kept separate from main() so it can be tested without the compiled schema,
+    which lives in envs/taxonium; it needs only objects with .mutation lists.
+    """
+    root = node_mutations[0]
+    moved = {m.position: m.mut_nuc[0] for m in root.mutation}
+    repointed = 0
+    for node in node_mutations:
+        for mutation in node.mutation:
+            if mutation.position in moved:
+                mutation.ref_nuc = moved[mutation.position]
+                repointed += 1
+    del root.mutation[:]
+    return moved, repointed
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input-mat", required=True)
@@ -148,18 +174,10 @@ def main():
     root = mat.node_mutations[0]
     logger.info(f"Root carries {len(root.mutation)} mutations vs the reference")
 
+    # Validates the root's mutations against the reference before anything is
+    # mutated in place, so a mismatched pair fails without a partial rewrite.
     sequence = root_sequence(reference, root.mutation)
-    # Positions where the origin moves; every ref_nuc at these must follow it.
-    moved = {m.position: m.mut_nuc[0] for m in root.mutation}
-
-    repointed = 0
-    for node in mat.node_mutations:
-        for mutation in node.mutation:
-            if mutation.position in moved:
-                mutation.ref_nuc = moved[mutation.position]
-                repointed += 1
-
-    del root.mutation[:]
+    moved, repointed = rebase_onto_root(mat.node_mutations)
     mat.newick = zero_root_branch_length(mat.newick)
 
     save_mat(mat, args.output_mat)
