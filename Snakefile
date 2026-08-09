@@ -180,18 +180,27 @@ rule download_all_references:
               expand("results/{segment}/all/reference/pathogen.json",
                      segment=[s for s in config["segments"] if s not in ["HA", "NA"]])
     input:
-        # Declared as an input, not just a params path: the accessions live in
-        # config.yaml, so editing one must re-trigger the download.
-        config_file="config.yaml",
         script=script_deps("download_ref_seq.py")
     params:
+        # The values this rule actually consumes, declared so the default
+        # `params` rerun-trigger hashes them. config.yaml is deliberately NOT an
+        # input: this rule sits at the head of the DAG, so depending on the
+        # file's mtime made every config edit -- a reroot target, a seed, a
+        # filtering threshold -- re-download the references and re-derive the
+        # whole pipeline. Measured before this change: one reroot target
+        # changed re-ran 1235 of 1235 jobs. Naming the values instead keeps the
+        # trigger precise; the script still reads the file for the rest.
+        references=config["references"],
+        ha_subtypes=config["ha_subtypes"],
+        na_subtypes=config["na_subtypes"],
+        segments=config["segments"],
         wait_time=30
     log:
         "logs/download_all_references.log"
     shell:
         """
         python scripts/download_ref_seq.py \
-            --config {input.config_file} \
+            --config config.yaml \
             --output-base-dir results \
             --wait-time {params.wait_time} \
             &> {log}
@@ -352,6 +361,21 @@ rule optimize_tree:
         """
 
 # Convert optimized trees to DAGs
+# larch has no `conda:` directive, and snakemake --lint flags both rules for it.
+# That is accepted, not an oversight: larch is built from source into the main
+# flu-usher environment (environment.yml carries its build and runtime deps,
+# not larch itself), from commit 0ac4146, built 2025-10-27.
+#
+# envs/larch.yaml used to sit here pointing at the packaged larch-phylo, and was
+# deleted rather than wired up. Note the package's "0.1.0" version string is a
+# stale VERSION-file fallback -- conda-build strips .git, so its `git describe`
+# never runs -- not a lower release: it is built from c2e75a2, which is the
+# v0.1.3 tag. The real gap is the 5 commits from there to 0ac4146, and adopting
+# it would not have degraded anything quietly, it would have broken outright:
+# fb1bb78 is what added VCF support to larch-dagutil, so the packaged binary has
+# no -v option and larch_merge below passes one. It also pins python_abi 3.8 and
+# boost-cpp 1.76. Packaging larch properly is a separate change that has to be
+# validated against the trees it produces.
 rule tree_to_dag:
     input:
         tree="results/{segment}/{subtype}/randomized_{n}/opt_tree.pb.gz",
@@ -371,7 +395,8 @@ rule tree_to_dag:
             &> {log}
         """
 
-# Use larch to merge multiple DAGs into a single DAG
+# Use larch to merge multiple DAGs into a single DAG.
+# No `conda:` -- see the note on tree_to_dag.
 rule larch_merge:
     input:
         dags=expand("results/{{segment}}/{{subtype}}/randomized_{n}/dag.pb",
@@ -493,7 +518,6 @@ rule reroot_newick:
     conda: "envs/ete3.yaml"
     input:
         newick="results/{segment}/{subtype}/sampled_tree.nh",
-        config="config.yaml",
         script=script_deps("reroot_newick.py")
     output:
         "results/{segment}/{subtype}/rerooted_tree.nh"
@@ -516,8 +540,7 @@ rule create_final_mat:
     conda: "envs/usher.yaml"
     input:
         tree=final_mat_source,
-        vcf="results/{segment}/{subtype}/randomized_0/msa.vcf",
-        config="config.yaml"
+        vcf="results/{segment}/{subtype}/randomized_0/msa.vcf"
     output:
         "results/{segment}/{subtype}/reference_origin_tree.pb.gz"
     params:
@@ -616,7 +639,6 @@ rule check_tree_sequences:
         reference="results/{segment}/{subtype}/curated_reference.fasta",
         final_origin="results/{segment}/{subtype}/final_tree_root.fasta",
         vcf="results/{segment}/{subtype}/randomized_0/msa.vcf",
-        config="config.yaml",
         script=script_deps("check_tree_sequences.py")
     output:
         "results/{segment}/{subtype}/reroot_sequence_check.txt"
@@ -1008,7 +1030,6 @@ rule execute_analyze_metadata:
     conda: "envs/python.yaml"
     input:
         notebook="notebooks/analyze_metadata.ipynb",
-        config_file="config.yaml",
         metadata="results/combined_metadata_augmented.csv",
         trees=ALL_FINAL_TREES
     output:
@@ -1031,6 +1052,7 @@ rule execute_analyze_metadata:
 # manifest. Output lines follow the standard `md5sum` format:
 # "<hash>  <path>", one file per line.
 rule input_data_md5sums:
+    conda: "envs/python.yaml"
     input:
         INPUT_DATA_FILES
     output:

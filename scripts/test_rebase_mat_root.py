@@ -7,14 +7,11 @@ protobuf. What is still uncovered here is the file-level round trip: load_mat,
 save_mat, and that the fields this script never touches (condensed_nodes,
 metadata) survive serialization. Those are exercised only by the pipeline.
 """
-import os
-import tempfile
 import unittest
 from types import SimpleNamespace
 
-from rebase_mat_root import (NUCLEOTIDES, read_reference, rebase_onto_root,
-                             root_branch_length, root_sequence,
-                             zero_root_branch_length)
+from rebase_mat_root import (NUCLEOTIDES, rebase_onto_root, root_branch_length,
+                             root_sequence, zero_root_branch_length)
 
 
 def mutation(position, par_nuc, *mut_nuc):
@@ -27,27 +24,6 @@ def mutation(position, par_nuc, *mut_nuc):
 
 
 A, C, G, T = (NUCLEOTIDES.index(b) for b in "ACGT")
-
-
-class ReadReferenceTestCase(unittest.TestCase):
-    def write(self, text):
-        handle = tempfile.NamedTemporaryFile("w", suffix=".fasta", delete=False)
-        handle.write(text)
-        handle.close()
-        self.addCleanup(os.unlink, handle.name)
-        return handle.name
-
-    def test_single_record(self):
-        self.assertEqual(read_reference(self.write(">r\nACGT\n")), "ACGT")
-
-    def test_wrapped_lines_are_joined(self):
-        self.assertEqual(read_reference(self.write(">r\nACGT\nAAGG\n")), "ACGTAAGG")
-
-    def test_stops_at_second_record(self):
-        self.assertEqual(read_reference(self.write(">a\nACGT\n>b\nTTTT\n")), "ACGT")
-
-    def test_uppercases(self):
-        self.assertEqual(read_reference(self.write(">r\nacgt\n")), "ACGT")
 
 
 class RootSequenceTestCase(unittest.TestCase):
@@ -167,6 +143,11 @@ class RebaseOntoRootTestCase(unittest.TestCase):
         moved, repointed = rebase_onto_root(nodes)
         self.assertEqual((moved, repointed), ({}, 0))
         self.assertEqual(self.child.mutation[0].ref_nuc, A)
+
+    def test_empty_node_mutations_raises(self):
+        """A MAT with no node lists has no root; IndexError would not say so."""
+        with self.assertRaises(ValueError):
+            rebase_onto_root([])
 
     def test_is_idempotent(self):
         """Rebasing an already-rebased tree changes nothing further."""

@@ -17,7 +17,7 @@ conda env create -f environment.yml
 conda activate flu-usher
 ```
 
-Per-step dependencies are managed via separate conda environments in `envs/` (ete3, fatovcf, historydag, larch, nextclade, pastml, python, taxonium, usher). Snakemake creates and activates these automatically when run with `--use-conda`.
+Per-step dependencies are managed via separate conda environments in `envs/` (ete3, fatovcf, historydag, nextclade, pastml, python, taxonium, usher; larch is not among them -- see the note on `tree_to_dag`). Snakemake creates and activates these automatically when run with `--use-conda`.
 
 ### Running the Pipeline
 ```bash
@@ -48,15 +48,23 @@ snakemake --cores 8 --use-conda results/HA/H5/geographic_trees/north_america_tre
 snakemake --cores 8 --use-conda <target> --forcerun <rule_name>
 
 # `--rerun-triggers mtime` narrows the default trigger set (mtime, params,
-# input, software-env, code) down to mtime alone. That disables params-based
-# invalidation, and six rules read config.yaml values through `params:`
-# without declaring config.yaml as an input -- create_newick's tree_sample_seed,
-# curate_and_extract_coding_seqs' max_frac_gaps/max_frac_ambig,
-# parse_gisaid_data's segment and subtype lists, and the three root rules
-# (create_root_samples_file, extract_root_mutations, create_root_fasta).
-# Under mtime-only, editing any of those in config.yaml leaves the affected
-# outputs stale with no warning. Use it for a quick dry run, not to decide
-# whether real work is up to date.
+# input, software-env, code) down to mtime alone, which disables params-based
+# invalidation. Only execute_analyze_alignments and execute_analyze_dags still
+# declare config.yaml as an input -- their notebooks open it directly, which
+# nothing but an mtime dependency can track -- so under mtime-only a config
+# edit re-runs those two and nothing else, and every substantive output goes
+# quietly stale. Measured: a reroot edit under mtime-only schedules 3 jobs.
+# Use it for a quick dry run, not to decide whether real work is up to date.
+#
+# Under the default triggers, config invalidation is precise: each rule names
+# the config values it consumes in `params:`, so editing a reroot target
+# re-runs the reroot rules and leaves the alignments alone. It did not used to
+# be -- download_all_references took config.yaml as an input at the head of the
+# DAG, so any edit re-downloaded the references and cascaded through
+# everything. Measured before that change: one reroot target re-ran 1235 of the
+# DAG's 1240 jobs, identically with and without the params trigger. (The five
+# spared are parse_gisaid_data, augment_metadata, the two annotation rules and
+# input_data_md5sums -- everything expensive re-derived.)
 snakemake -n --use-conda <target> --rerun-triggers mtime
 
 # Generate workflow visualization
@@ -199,7 +207,7 @@ The pipeline expects GISAID data in each input directory:
 
 ### Important Notes
 
-- Tests live in six `scripts/test_*.py` modules (179 unittest tests: curate 91, rebase_mat_root 33, check_tree_sequences 30, parse_gisaid 11, reroot_newick 8, create_samples 6). Run them with `python -m unittest discover` from within `scripts/`. Under `envs/python.yaml` that reports `OK (skipped=8)`: `test_reroot_newick.py` is `skipIf`-guarded because ete3 lives in its own env, so run it separately under `envs/ete3.yaml` to actually exercise those 8 — `OK (skipped=N)` otherwise reads like a pass. No linting setup currently exists, and 11 of the 17 script modules are untested.
+- Tests live in nine `scripts/test_*.py` modules (221 unittest tests: curate 91, check_tree_sequences 31, rebase_mat_root 30, utils 21, parse_gisaid 15, extract_root_sequence 13, create_samples 9, reroot_newick 8, config_params_sync 3). Run them with `python -m unittest discover` from within `scripts/`. Under `envs/python.yaml` that reports `OK (skipped=8)`: `test_reroot_newick.py` is `skipIf`-guarded because ete3 lives in its own env, so run it separately under `envs/ete3.yaml` to actually exercise those 8 — `OK (skipped=N)` otherwise reads like a pass. No linting setup currently exists, and 9 of the 17 script modules are untested.
 - The pipeline uses compressed outputs (.xz, .gz) to save disk space
 - All logs are saved in the `logs/` directory organized by segment/subtype
 - The pipeline can process multiple influenza subtypes simultaneously

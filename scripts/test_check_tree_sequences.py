@@ -185,6 +185,25 @@ class EndToEndTestCase(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("sample sets differ", result.stderr)
 
+    def test_report_lists_both_kinds_of_differing_site(self):
+        """A key-set difference must not hide a same-key value difference.
+
+        EPI_A differs at position 1 (G vs C, called in both) and at position 3
+        (present only in the final tree). Reporting only the latter would send
+        someone debugging this to the wrong site.
+        """
+        sampled = "EPI_A\tnode_1:A1G\n"
+        final = "EPI_A\tnode_9:A1C,G3T\n"
+        result = self.run_check(sampled, final)
+        self.assertEqual(result.returncode, 1)
+        # Assert the exact list from the report, not a substring of stderr:
+        # log lines carry a timestamp, and "14:30:16,636" contains both a "1"
+        # and a "3", so substring checks pass no matter what was reported.
+        # The old expression yields [3] here; this must distinguish them.
+        with open(os.path.join(self.tmp.name, "report.txt")) as handle:
+            report = handle.read()
+        self.assertIn("EPI_A: [1, 3]", report, report)
+
     def test_extra_sample_in_final_tree_fails(self):
         """The other half of the mismatch check, OR'd into the same branch."""
         sampled = "EPI_A\tnode_1:A1G\n"

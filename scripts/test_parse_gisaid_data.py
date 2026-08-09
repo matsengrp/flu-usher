@@ -16,6 +16,7 @@ parsing itself is not what these tests are about.
 
 import lzma
 import os
+import shutil
 import sys
 import tempfile
 import unittest
@@ -246,6 +247,73 @@ class TestDuplicateHandling(unittest.TestCase):
                                   ha_subtypes=["H1"], na_subtypes=["N1"])
             self.assertEqual(code, 0)
             self.assertEqual(read_records(out, "HA", "H1"), ["EPI_ISL_1"])
+
+
+class TestUnparseableSubtype(unittest.TestCase):
+    """A subtype that is not H*N* is skipped, not crashed on and not guessed.
+
+    extract_ha_na_subtype() returns (None, None) for anything its regex misses,
+    and HA and NA records take separate branches on that. Real GISAID data
+    carries entries like "B / Victoria" that land here.
+
+    Every case supplies a full complement of parseable records, because
+    parse_gisaid_data exits nonzero if any configured combination produces
+    nothing -- a different guard, already covered elsewhere.
+    """
+
+    GOOD = [
+        seq_id("HA", "EPI_ISL_1", "A_/_H1N1"),
+        seq_id("NA", "EPI_ISL_1", "A_/_H1N1"),
+        seq_id("PB2", "EPI_ISL_1", "A_/_H1N1"),
+    ]
+    IDS = ["EPI_ISL_1", "EPI_ISL_2"]
+
+    def run_with(self, extra):
+        tmpdir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmpdir, True)
+        return run_parse(tmpdir, self.GOOD + [extra], self.IDS,
+                         ha_subtypes=["H1"], na_subtypes=["N1"])
+
+    def test_ha_record_with_unparseable_subtype_is_skipped(self):
+        code, out = self.run_with(seq_id("HA", "EPI_ISL_2", "B_/_Victoria"))
+        self.assertEqual(code, 0)
+        self.assertEqual(read_records(out, "HA", "H1"), ["EPI_ISL_1"])
+
+    def test_na_record_with_unparseable_subtype_is_skipped(self):
+        code, out = self.run_with(seq_id("NA", "EPI_ISL_2", "B_/_Yamagata"))
+        self.assertEqual(code, 0)
+        self.assertEqual(read_records(out, "NA", "N1"), ["EPI_ISL_1"])
+
+    def test_partial_subtype_is_not_half_matched(self):
+        """"H3" alone has no N part, so the regex must reject the whole thing.
+
+        H3 is deliberately CONFIGURED here. With it unconfigured, a regex that
+        half-matched and returned ("H3", None) would be dropped by the
+        unrelated "subtype not configured" branch, producing exactly the same
+        observable result as correct rejection -- so the test could not tell
+        the two apart. Configuring it means a half-match would visibly write
+        an HA/H3 record.
+        """
+        tmpdir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmpdir, True)
+        records = self.GOOD + [
+            seq_id("HA", "EPI_ISL_3", "A_/_H3N2"),      # keeps H3 non-empty
+            seq_id("HA", "EPI_ISL_2", "A_/_H3"),        # the partial one
+        ]
+        code, out = run_parse(tmpdir, records,
+                              ["EPI_ISL_1", "EPI_ISL_2", "EPI_ISL_3"],
+                              ha_subtypes=["H1", "H3"], na_subtypes=["N1"])
+        self.assertEqual(code, 0)
+        self.assertEqual(read_records(out, "HA", "H3"), ["EPI_ISL_3"],
+                         "EPI_ISL_2 was half-matched into H3 on a subtype "
+                         "with no N part")
+
+    def test_internal_segment_ignores_the_subtype_entirely(self):
+        """Internal segments group as 'all', so the H*N* parse never applies."""
+        code, out = self.run_with(seq_id("PB2", "EPI_ISL_2", "B_/_Victoria"))
+        self.assertEqual(code, 0)
+        self.assertEqual(sorted(read_records(out, "PB2", "all")),
+                         ["EPI_ISL_1", "EPI_ISL_2"])
 
 
 if __name__ == "__main__":

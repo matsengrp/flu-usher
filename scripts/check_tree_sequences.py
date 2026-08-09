@@ -45,22 +45,14 @@ cannot quietly hollow out the check.
 import argparse
 import sys
 
-from utils import setup_logging
+from utils import iter_path_mutations, read_reference, setup_logging
 
 logger = setup_logging(__name__)
 
 
-def read_reference(path):
+def reference_positions(path):
     """Return {1-based position: base} for the single record in a FASTA file."""
-    seq = []
-    with open(path) as handle:
-        for line in handle:
-            if line.startswith(">"):
-                if seq:
-                    break
-                continue
-            seq.append(line.strip())
-    return {i: base.upper() for i, base in enumerate("".join(seq), start=1)}
+    return {i: base for i, base in enumerate(read_reference(path), start=1)}
 
 
 def compose(path_field, ref, origin_diff=None):
@@ -78,13 +70,8 @@ def compose(path_field, ref, origin_diff=None):
     `ref` and stay comparable. Empty for a tree already on the reference.
     """
     alleles = {}
-    for chunk in path_field.split():
-        _, _, muts = chunk.partition(":")
-        for mut in muts.split(","):
-            if not mut:
-                continue
-            pos = int(mut[1:-1])
-            alleles[pos] = mut[-1]
+    for _, position, mutant in iter_path_mutations(path_field):
+        alleles[position] = mutant
     if origin_diff:
         # Positions where the origin already differs from ref and the path says
         # nothing: the sample inherits the origin's base, which is a difference.
@@ -130,6 +117,28 @@ def root_children(newick):
     Hand-rolled rather than via ete3 so this stays in envs/python.yaml: loading
     a 130k-leaf tree just to read two names is not worth a second conda env in
     the rule.
+
+    Scanning for delimiters like this would mis-parse a label containing '(',
+    ')' or ':'. No such label reaches here, from any of the three sources of
+    names in a matUtils newick:
+
+    - Leaves are sequence IDs, and sanitize_id() in utils.py strips
+      [ ] ( ) : ; , ' . from every one of them; curate_and_extract_coding_seqs
+      applies it upstream of everything that becomes a leaf. Enforced, not
+      assumed.
+    - Internal nodes are named node_N by matUtils itself, not by anything in
+      this repo. (The internal_<id> names that
+      convert_DAG_protobuf_to_newick_samples writes appear in sampled_tree.nh
+      and rerooted_tree.nh, which this function never reads.)
+    - Condensed nodes are node_N_condensed_M_leaves, written by usher -- 529 of
+      them across 15 of the 16 shipped trees. These bypass sanitize_id
+      entirely; they are safe because usher composes them from digits and
+      underscores, not because anything strips them.
+
+    Checked against the shipped trees: 0 risky characters in 113,434 labels
+    across HA/H7 and NA/N1, of which 84,664 are leaves. Newick comments in
+    [...] are likewise not handled, and matUtils does not emit them. Anything
+    feeding this an arbitrary newick needs a real parser.
     """
     text = newick.strip()
     end = text.rfind(")")
@@ -215,7 +224,7 @@ def main():
             sys.exit(1)
         logger.info(f"Final tree is rooted at '{args.expect_root}'")
 
-    ref = read_reference(args.reference)
+    ref = reference_positions(args.reference)
 
     # The final tree may have been rebased onto its own root, in which case its
     # mutations are recorded against that sequence rather than the reference.
@@ -223,7 +232,7 @@ def main():
     # the whole reason rebasing is bookkeeping rather than a change of content.
     final_origin_diff = {}
     if args.final_origin:
-        origin = read_reference(args.final_origin)
+        origin = reference_positions(args.final_origin)
         if len(origin) != len(ref):
             logger.error(
                 f"final origin spans {len(origin)} positions, reference "
@@ -291,7 +300,13 @@ def main():
             b = {p: v for p, v in final[sample].items() if p not in skip}
             excluded_sites += len(skip)
             if a != b:
-                sites = sorted(set(a) ^ set(b)) or sorted(p for p in a if a[p] != b.get(p))
+                # Both kinds of difference, not just the first kind that
+                # happens to be non-empty: a sample can have a position called
+                # in one tree and not the other *and* a position called in
+                # both with different bases. Reporting only the former sends
+                # whoever debugs this looking at the wrong sites.
+                sites = sorted(set(a) ^ set(b)
+                               | {p for p in set(a) & set(b) if a[p] != b[p]})
                 differing[sample] = sites
 
     with open(args.output, "w") as handle:

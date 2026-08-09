@@ -30,26 +30,13 @@ import argparse
 import gzip
 import sys
 
-from utils import setup_logging
+from utils import read_reference, setup_logging
 
 logger = setup_logging(__name__)
 
 # usher encodes nucleotides as indices into this string, verified against the
 # mutation paths matUtils writes (position 33 ref_nuc=0 mut_nuc=3 is "A33T").
 NUCLEOTIDES = "ACGT"
-
-
-def read_reference(path):
-    """Return the single sequence in a FASTA file, uppercased."""
-    parts = []
-    with open(path) as handle:
-        for line in handle:
-            if line.startswith(">"):
-                if parts:
-                    break
-                continue
-            parts.append(line.strip())
-    return "".join(parts).upper()
 
 
 def _schema():
@@ -96,6 +83,13 @@ def root_branch_length(newick):
     Branch lengths in a MAT newick are mutation counts, so this is a second,
     independent encoding of len(node_mutations[0].mutation) -- which is what
     makes it useful for checking that node_mutations[0] really is the root.
+
+    Like zero_root_branch_length() below, this finds the root by scanning for
+    the last ')', which a label containing parens or colons would defeat. They
+    cannot appear here -- note this reads mat.newick from inside the protobuf,
+    where internal nodes are unnamed and only leaves and usher's condensed
+    nodes carry labels. See check_tree_sequences.root_children for the full
+    argument over all three sources of names.
     """
     text = newick.rstrip().rstrip(";")
     close = text.rfind(")")
@@ -161,6 +155,8 @@ def rebase_onto_root(node_mutations):
     Kept separate from main() so it can be tested without the compiled schema,
     which lives in envs/taxonium; it needs only objects with .mutation lists.
     """
+    if not node_mutations:
+        raise ValueError("MAT has no node mutation lists, so it has no root")
     root = node_mutations[0]
     moved = {m.position: m.mut_nuc[0] for m in root.mutation}
     repointed = 0
