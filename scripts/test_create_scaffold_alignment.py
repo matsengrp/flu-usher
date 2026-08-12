@@ -20,6 +20,7 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(__file__))
 
@@ -191,6 +192,34 @@ class SelectScaffoldIdsTestCase(unittest.TestCase):
         with self.assertRaises(ValueError):
             csa.select_scaffold_ids(["A", "B"], {}, 2, seed=0)
 
+    def test_a_year_holding_one_sequence_still_contributes_it(self):
+        """The sparse end of the range is the whole point of stratifying."""
+        years, ids = self._years({2000: 1, 2001: 50})
+        chosen = csa.select_scaffold_ids(ids, years, 10, seed=0)
+        self.assertEqual(sum(1 for i in chosen if years[i] == 2000), 1)
+
+    def test_a_repeated_id_takes_a_single_slot(self):
+        """
+        A repeat must not consume two of its year's quota. It used to: the id
+        went into the year's candidate list twice, and both copies could be
+        drawn -- collapsing to one entry in the returned set, so the draw was
+        silently short while the caller emitted both records.
+        """
+        years = {"DUP": 2000, "OTHER": 2000}
+        chosen = csa.select_scaffold_ids(["DUP", "DUP", "OTHER"], years, 2, seed=0)
+        self.assertEqual(chosen, {"DUP", "OTHER"})
+
+    def test_zero_n_taxa_raises(self):
+        """Must name the problem, not die inside a logging f-string."""
+        with self.assertRaises(ValueError) as caught:
+            csa.select_scaffold_ids(["A"], {"A": 2000}, 0, seed=0)
+        self.assertIn("n_taxa", str(caught.exception))
+
+    def test_negative_n_taxa_raises(self):
+        with self.assertRaises(ValueError) as caught:
+            csa.select_scaffold_ids(["A"], {"A": 2000}, -5, seed=0)
+        self.assertIn("n_taxa", str(caught.exception))
+
 
 class CreateScaffoldAlignmentTestCase(unittest.TestCase):
     def setUp(self):
@@ -264,6 +293,97 @@ class CreateScaffoldAlignmentTestCase(unittest.TestCase):
     def test_asking_for_more_than_exists_yields_everything_dated(self):
         self._build({2000: 5, 2001: 5}, n_taxa=1000)
         self.assertEqual(len(read_fasta_ids(self.out_msa)) - 1, 10)
+
+    def test_a_repeated_id_yields_a_single_record(self):
+        """
+        Two records under one name would reach usher as two samples of the same
+        name, from a scaffold that reported drawing one taxon.
+        """
+        write_alignment(self.alignment, ["DUP", "DUP"])
+        write_metadata(self.metadata, {"DUP": "2000-06-01"})
+        csa.create_scaffold_alignment(self.alignment, self.metadata, self.out_msa,
+                                      self.out_samples, 1, 0)
+        written = read_fasta_ids(self.out_msa)
+        self.assertEqual(written, [REFERENCE_ID, "DUP"])
+        with open(self.out_samples) as handle:
+            listed = [line.strip() for line in handle if line.strip()]
+        self.assertEqual(listed, [REFERENCE_ID, "DUP"])
+
+    def test_a_sequence_absent_from_the_metadata_is_not_drawn(self):
+        """Absent is not the same as present-but-blank, and both are ineligible."""
+        write_alignment(self.alignment, ["DATED", "NOT_IN_METADATA"])
+        write_metadata(self.metadata, {"DATED": "2000-06-01"})
+        csa.create_scaffold_alignment(self.alignment, self.metadata, self.out_msa,
+                                      self.out_samples, 5, 0)
+        self.assertEqual(read_fasta_ids(self.out_msa), [REFERENCE_ID, "DATED"])
+
+    def test_zero_n_taxa_raises(self):
+        with self.assertRaises(ValueError):
+            self._build({2000: 5}, n_taxa=0)
+
+
+class CliTestCase(unittest.TestCase):
+    """
+    Exercise main() the way the Snakemake rule does. A flag renamed here but not
+    in the Snakefile -- or an args attribute that no longer matches its flag --
+    would otherwise surface only once the pipeline ran.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_main_wires_every_flag_through(self):
+        alignment = os.path.join(self.tmp.name, "msa.fasta.xz")
+        metadata = os.path.join(self.tmp.name, "metadata.csv")
+        out_msa = os.path.join(self.tmp.name, "scaffold.fasta.xz")
+        out_samples = os.path.join(self.tmp.name, "scaffold_samples.txt")
+        write_alignment(alignment, [f"S_{i}" for i in range(10)])
+        write_metadata(metadata, {f"S_{i}": f"{2000 + i}-06-01" for i in range(10)})
+
+        argv = [
+            "create_scaffold_alignment.py",
+            "--alignment", alignment,
+            "--metadata", metadata,
+            "--output-alignment", out_msa,
+            "--output-samples", out_samples,
+            "--n-taxa", "4",
+            "--seed", "0",
+        ]
+        with mock.patch.object(sys, "argv", argv):
+            csa.main()
+
+        written = read_fasta_ids(out_msa)
+        self.assertEqual(written[0], REFERENCE_ID)
+        self.assertEqual(len(written), 5)
+
+    def test_seed_reaches_the_draw(self):
+        """A --seed that main() ignored would make every randomization identical."""
+        alignment = os.path.join(self.tmp.name, "msa.fasta.xz")
+        metadata = os.path.join(self.tmp.name, "metadata.csv")
+        write_alignment(alignment, [f"S_{i}" for i in range(200)])
+        write_metadata(metadata,
+                       {f"S_{i}": f"{2000 + i % 4}-06-01" for i in range(200)})
+
+        draws = []
+        for seed in ("0", "1"):
+            out_msa = os.path.join(self.tmp.name, f"s{seed}.fasta.xz")
+            out_samples = os.path.join(self.tmp.name, f"s{seed}.txt")
+            argv = [
+                "create_scaffold_alignment.py",
+                "--alignment", alignment,
+                "--metadata", metadata,
+                "--output-alignment", out_msa,
+                "--output-samples", out_samples,
+                "--n-taxa", "20",
+                "--seed", seed,
+            ]
+            with mock.patch.object(sys, "argv", argv):
+                csa.main()
+            draws.append(read_fasta_ids(out_msa))
+        self.assertNotEqual(draws[0], draws[1])
 
 
 if __name__ == "__main__":

@@ -318,11 +318,17 @@ rule create_vcf:
 # usher-sampled places sequences greedily in alignment order onto an empty tree,
 # and on HA/H3 that settled on a high-level shape which is measurably not the
 # most parsimonious one available: sequences collected from 2006 on sat ~70
-# branches deeper on the trunk than 2005's, with no matching rise in divergence.
-# Scoring 1001 leaves drawn evenly across collection year under two topologies,
-# through one `usher -t` pass on one VCF: a tree built from just those leaves
-# scores 8298, while the same leaves extracted from the shipped HA/H3
-# final_tree.pb.gz score 8620. The search, not the data, is what falls short.
+# branches deeper on the trunk than 2005's, with no matching rise in divergence,
+# and 35% of pre-2008 leaves sat deeper than the median 2013 leaf. Scaffolding
+# fixed both at once, which is what says the search rather than the data was at
+# fault: on the same 86,232 sequences, HA/H3's final_tree went from 185,398 to
+# 185,299 parsimony, 2006's median depth from 161 to 92, and that 35% to 0%.
+#
+# Do not compare a scaffolded subset against the same leaves extracted from a
+# full tree -- an earlier version of this comment did, and the comparison is
+# confounded. Restricting an 86k-leaf tree to a 1k-leaf subset inflates its
+# parsimony on that subset, because a globally optimal tree does not induce an
+# optimal subtree. Only whole-tree scores on a fixed sequence set compare.
 #
 # Optimising ~1000 sequences is a far easier search than optimising 86,232, so
 # each randomization builds its own backbone from a time-spread subset first.
@@ -366,6 +372,9 @@ rule create_scaffold_vcf:
     input:
         msa="results/{segment}/{subtype}/randomized_{n}/scaffold_msa.fasta.xz"
     output:
+        # temp(), unlike the full msa.vcf, which half a dozen later rules read:
+        # this one has a single consumer and faToVcf regenerates it in seconds
+        # from the scaffold alignment, which is kept precisely so that it can.
         temp("results/{segment}/{subtype}/randomized_{n}/scaffold.vcf")
     log:
         "logs/{segment}/{subtype}/randomized_{n}/create_scaffold_vcf.log"

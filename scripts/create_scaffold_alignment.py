@@ -63,9 +63,10 @@ def allocate_quotas(available, total):
     """
     Split `total` draws over the keys of `available` as evenly as possible.
 
-    `available` maps each year to the number of sequences it actually has.
-    Returns year -> number to draw, where no value exceeds that year's
-    availability and the values sum to min(total, sum of availability).
+    `available` maps each year to the number of sequences it actually has, and
+    `total` must be non-negative. Returns year -> number to draw, where no value
+    exceeds that year's availability and the values sum to min(total, sum of
+    availability).
 
     Water-filling: give every year that still has room an equal share of what is
     left, let the years that cannot use their full share return the remainder,
@@ -89,8 +90,13 @@ def allocate_quotas(available, total):
             take = min(want, available[year] - quotas[year])
             quotas[year] += take
             placed += take
-        if placed == 0:
-            break
+        # A round always places something: every open year has room for at least
+        # one more, and every open year is asked for at least one -- either
+        # share >= 1, or share == 0 and the leftover goes to the first `extra`
+        # years as a +1. Assert rather than `break`, because breaking here would
+        # quietly return short quotas, and a round that could not advance would
+        # spin forever.
+        assert placed > 0, "water-filling made no progress"
         remaining -= placed
 
     return quotas
@@ -104,11 +110,26 @@ def select_scaffold_ids(candidate_ids, years, n_taxa, seed):
     absent from it are not eligible. Returns an unordered set of chosen ids --
     the caller decides the output order.
     """
+    if n_taxa < 1:
+        raise ValueError(f"n_taxa must be at least 1, got {n_taxa}")
+
     rng = random.Random(seed)
 
+    # A repeated id counts once, or it would take more than one slot out of its
+    # year's quota while the caller, matching output records by id, emits every
+    # copy anyway -- an overdraw disguised as a full draw.
+    duplicated = len(candidate_ids) - len(set(candidate_ids))
+    if duplicated:
+        logger.warning(
+            f"{duplicated} of {len(candidate_ids)} alignment ids are repeats; "
+            f"counting each id once and keeping its first record"
+        )
+
     by_year = defaultdict(list)
+    seen = set()
     for isolate_id in candidate_ids:
-        if isolate_id in years:
+        if isolate_id in years and isolate_id not in seen:
+            seen.add(isolate_id)
             by_year[years[isolate_id]].append(isolate_id)
     if not by_year:
         raise ValueError("no alignment sequence has a usable collection date")
@@ -146,12 +167,20 @@ def create_scaffold_alignment(alignment_file, metadata_file, out_alignment,
         raise ValueError("alignment must contain a reference and at least one sequence")
 
     reference, rest = records[0], records[1:]
-    years = read_collection_years(metadata_file, {r.id for r in rest})
-    chosen = select_scaffold_ids([r.id for r in rest], years, n_taxa, seed)
+    rest_ids = [record.id for record in rest]
+    years = read_collection_years(metadata_file, set(rest_ids))
+    chosen = select_scaffold_ids(rest_ids, years, n_taxa, seed)
 
     # Input order, not sampling order: a randomised input alignment must yield a
     # randomised scaffold, since usher-sampled places greedily in file order.
-    scaffold = [reference] + [r for r in rest if r.id in chosen]
+    # Each drawn id contributes one record, so a repeated id cannot smuggle a
+    # second copy into the scaffold and give usher two samples of the same name.
+    pending = set(chosen)
+    scaffold = [reference]
+    for record in rest:
+        if record.id in pending:
+            pending.discard(record.id)
+            scaffold.append(record)
 
     with open_sequence_file(out_alignment, "wt") as handle:
         SeqIO.write(scaffold, handle, "fasta")
