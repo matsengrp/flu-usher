@@ -313,15 +313,114 @@ rule create_vcf:
         | faToVcf -includeRef -ambiguousToN -includeNoAltN stdin {output} 2> {log}
         """
 
-# Create initial tree with usher-sampled
+# Build a time-spread backbone before placing the full alignment (issue #53).
+#
+# usher-sampled places sequences greedily in alignment order onto an empty tree,
+# and on HA/H3 that settled on a high-level shape which is measurably not the
+# most parsimonious one available: sequences collected from 2006 on sat ~70
+# branches deeper on the trunk than 2005's, with no matching rise in divergence.
+# Scoring 1001 leaves drawn evenly across collection year under two topologies,
+# through one `usher -t` pass on one VCF: a tree built from just those leaves
+# scores 8298, while the same leaves extracted from the shipped HA/H3
+# final_tree.pb.gz score 8620. The search, not the data, is what falls short.
+#
+# Optimising ~1000 sequences is a far easier search than optimising 86,232, so
+# each randomization builds its own backbone from a time-spread subset first.
+# The subset is drawn with that randomization's seed and written in the
+# randomized alignment's order, so backbones stay as diverse across
+# randomizations as the placements they seed -- which is what the merged DAG
+# needs in order to keep exploring topology space.
+rule create_scaffold_alignment:
+    conda: "envs/python.yaml"
+    input:
+        msa="results/{segment}/{subtype}/randomized_{n}/msa.fasta.xz",
+        # combined_metadata.csv, not the augmented one: this needs only
+        # collection_date, and depending on the augmented file would put host
+        # and geography classification upstream of every tree in the pipeline.
+        metadata="results/combined_metadata.csv",
+        script=script_deps("create_scaffold_alignment.py")
+    output:
+        msa="results/{segment}/{subtype}/randomized_{n}/scaffold_msa.fasta.xz",
+        samples="results/{segment}/{subtype}/randomized_{n}/scaffold_samples.txt"
+    params:
+        n_taxa=config["scaffold_n_taxa"],
+        seed=lambda wildcards: int(wildcards.n)
+    log:
+        "logs/{segment}/{subtype}/randomized_{n}/create_scaffold_alignment.log"
+    shell:
+        """
+        python scripts/create_scaffold_alignment.py \
+            --alignment {input.msa} \
+            --metadata {input.metadata} \
+            --output-alignment {output.msa} \
+            --output-samples {output.samples} \
+            --n-taxa {params.n_taxa} \
+            --seed {params.seed} \
+            &> {log}
+        """
+
+# Convert the scaffold alignment to VCF, exactly as create_vcf does for the full
+# alignment. Separate rule because faToVcf lives in its own environment.
+rule create_scaffold_vcf:
+    conda: "envs/fatovcf.yaml"
+    input:
+        msa="results/{segment}/{subtype}/randomized_{n}/scaffold_msa.fasta.xz"
+    output:
+        temp("results/{segment}/{subtype}/randomized_{n}/scaffold.vcf")
+    log:
+        "logs/{segment}/{subtype}/randomized_{n}/create_scaffold_vcf.log"
+    shell:
+        """
+        xzcat {input.msa} \
+        | faToVcf -includeRef -ambiguousToN -includeNoAltN stdin {output} 2> {log}
+        """
+
+# usher-sampled then matOptimize on the scaffold, in one rule: both run in
+# seconds at this size, so there is nothing to gain from a checkpoint between
+# them. This mirrors create_initial_tree + optimize_tree, which stay separate
+# because at full size they are the two most expensive steps in the pipeline.
+rule build_scaffold_tree:
+    conda: "envs/usher.yaml"
+    input:
+        vcf="results/{segment}/{subtype}/randomized_{n}/scaffold.vcf"
+    output:
+        tree="results/{segment}/{subtype}/randomized_{n}/scaffold_tree.pb.gz"
+    threads: 2
+    log:
+        "logs/{segment}/{subtype}/randomized_{n}/build_scaffold_tree.log"
+    shell:
+        # A private scratch dir, because usher-sampled writes final-tree.nh and
+        # several other fixed-name files beside its -d target -- which would
+        # collide with create_initial_tree writing into the same randomization
+        # directory. -n on matOptimize suppresses intermediate protobufs, which
+        # at this size are pure clutter: there is no long run to resume.
+        """
+        TMPD=$(mktemp -d)
+        trap "rm -rf $TMPD" EXIT
+        echo '()' > $TMPD/emptyTree.nwk
+        usher-sampled -T {threads} -A \
+            -t $TMPD/emptyTree.nwk \
+            -v {input.vcf} \
+            -d $TMPD/ \
+            -o $TMPD/scaffold_preopt.pb.gz \
+            --optimization_radius 0 --batch_size_per_process 5 \
+            &> {log}
+        matOptimize -T {threads} -m 0.00000001 -M 1 -n \
+            -i $TMPD/scaffold_preopt.pb.gz \
+            -v {input.vcf} \
+            -o $PWD/{output.tree} \
+            &>> {log}
+        """
+
+# Place every remaining sequence onto the scaffold with usher-sampled
 # TODO add this arg back in? -e 5
 rule create_initial_tree:
     conda: "envs/usher.yaml"
     input:
-        vcf="results/{segment}/{subtype}/randomized_{n}/msa.vcf"
+        vcf="results/{segment}/{subtype}/randomized_{n}/msa.vcf",
+        scaffold="results/{segment}/{subtype}/randomized_{n}/scaffold_tree.pb.gz"
     output:
-        tree="results/{segment}/{subtype}/randomized_{n}/preopt_tree.pb.gz",
-        empty_tree=temp("results/{segment}/{subtype}/randomized_{n}/emptyTree.nwk")
+        tree="results/{segment}/{subtype}/randomized_{n}/preopt_tree.pb.gz"
     params:
         outdir="results/{segment}/{subtype}/randomized_{n}"
     threads: 2
@@ -329,10 +428,15 @@ rule create_initial_tree:
         stdout="logs/{segment}/{subtype}/randomized_{n}/usher-sampled.log",
         stderr="logs/{segment}/{subtype}/randomized_{n}/usher-sampled.stderr"
     shell:
+        # -i, not -t: matUtils extract -t segfaults in this usher build even on a
+        # 1592-node tree, so there is no way to hand the optimised scaffold over
+        # as a newick. Feeding the MAT straight through costs nothing -- placing
+        # all 86,232 HA/H3 sequences scored 189,532 via -i against 189,536 via a
+        # newick, so usher re-derives the backbone's states from the full VCF
+        # either way. Samples already in the scaffold are skipped, not duplicated.
         """
-        echo '()' > {output.empty_tree}
         usher-sampled -T {threads} -A \
-            -t {output.empty_tree} \
+            -i {input.scaffold} \
             -v {input.vcf} \
             -d {params.outdir}/ \
             -o {output.tree} \
