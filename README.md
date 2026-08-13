@@ -34,6 +34,7 @@ flu-usher/
 │   ├── download_ref_seq.py                         # Download reference sequences
 │   ├── curate_and_extract_coding_seqs.py           # Curate alignments and extract coding sequences
 │   ├── randomize_alignment.py                      # Randomize alignment order
+│   ├── create_scaffold_alignment.py                # Subset an alignment to a time-spread sample
 │   ├── trim_dag.py                                 # Trim suboptimal trees from DAG
 │   ├── convert_DAG_protobuf_to_newick_samples.py   # Sample tree from DAG
 │   ├── create_root_samples_file.py                 # Create samples file for root extraction
@@ -118,6 +119,9 @@ flu-usher/
    - `randomized_{n}/`: Directory for each randomized alignment (n = 0, 1, 2, ...)
      - `msa.fasta.xz`: Randomized alignment
      - `msa.vcf`: Variant call format file
+     - `scaffold_msa.fasta.xz`: Time-spread subset of the alignment (see [Design Notes](#design-notes))
+     - `scaffold_samples.txt`: Ids that went into the scaffold, one per line
+     - `scaffold_tree.pb.gz`: Optimized backbone tree built from that subset
      - `preopt_tree.pb.gz`: Initial parsimony tree
      - `opt_tree.pb.gz`: Optimized tree
      - `dag.pb`: DAG representation of the tree
@@ -185,9 +189,11 @@ flu-usher/
    - Converts each randomized FASTA alignment to variant format
    - Includes reference and handles ambiguous nucleotides
 
-7. **Build initial tree** (usher-sampled):
-   - Creates parsimony-based phylogenetic tree for each randomization
-   - Uses empty starting tree and builds incrementally
+7. **Build initial tree** (`create_scaffold_alignment.py`, faToVcf, usher-sampled, matOptimize):
+   - Draws `scaffold_n_taxa` sequences spread evenly across collection year into a scaffold alignment
+   - Builds and optimizes a backbone tree from that subset alone
+   - Places every remaining sequence onto the backbone with usher-sampled
+   - Why the backbone exists, and how the draw works: see [Design Notes](#design-notes)
 
 8. **Optimize tree** (matOptimize):
    - Refines tree topology to minimize parsimony score for each randomization
@@ -209,13 +215,15 @@ flu-usher/
     - Samples a representative tree from the trimmed DAG
     - Outputs in Newick format
 
-13. **Create MAT protobuf** (matOptimize):
+13. **Create MAT protobuf** (usher):
     - Converts the sampled Newick tree to MAT protobuf format
     - Required for downstream matUtils operations
 
-14. **Reroot tree** (matUtils extract):
-    - Reroots the tree at a specified node if configured
-    - Otherwise creates a symlink to the sampled tree
+14. **Reroot tree** (`reroot_newick.py`, usher, `rebase_mat_root.py`, `check_tree_sequences.py`):
+    - Where `reroot` is configured, reroots the *newick* at the named leaf, then rebuilds the MAT from the alignment; other combinations symlink the sampled MAT through unchanged
+    - Moves the MAT's origin from the reference onto the tree's own root, writing that root out as `final_tree_root.fasta`
+    - Checks that no sample's sequence changed across rerooting and that the tree is rooted where the config asked, writing `reroot_sequence_check.txt`
+    - Why rerooting happens in newick space rather than with `matUtils extract -y`: see [Design Notes](#design-notes)
 
 15. **Create root sequence** (`extract_root_sequence.py` or symlink):
     - If rerooted: Infers root sequence from tree mutations
@@ -256,6 +264,210 @@ flu-usher/
 22. **Record input data md5 sums** (md5sum):
     - Walks every `.fasta` and `.xls` file under the configured `input_dirs` and writes their md5 hashes to `results/input_data_md5sums.txt` as a provenance manifest
     - Files are listed as explicit Snakemake inputs, so the manifest is regenerated whenever any input data file changes
+
+## Design Notes
+
+Why the pipeline is built the way it is. The Snakefile carries only short
+comments saying what each rule does; the reasoning lives here, so that these
+notes can be read as a whole and can carry evidence at length.
+
+### Why each tree search starts from a time-spread scaffold
+
+Issue #53. Placing all 86,232 HA/H3 sequences onto an empty tree settled on a
+high-level shape that is measurably not the most parsimonious one available:
+sequences collected from 2006 on sat ~70 branches deeper on the trunk than
+2005's, with no matching rise in divergence. Building a ~1000-sequence backbone
+first and placing everything else onto it fixed that *and* improved the score,
+which is what says the search rather than the data was at fault. On the same
+86,232 sequences, HA/H3's `final_tree` went from 185,398 to 185,301 parsimony
+and 2006's median depth from 161 to 93.
+
+The clearest evidence is per-randomization rather than on the merged result.
+Rerooted and measured by cohort, 4 of the 10 baseline `opt_tree`s had 2006
+sitting 18-28 branches *deeper* than 2013; with a scaffold, 0 of 10 do, and 9 of
+10 are clean at 2/2571 leaves inverted. So the per-randomization search was
+itself part of the problem — an earlier write-up claimed the search was never at
+fault, which was wrong, and rested on the two randomizations that happened to be
+clean.
+
+Two measurement traps, both of which earlier write-ups fell into:
+
+- **Do not compare a scaffolded subset against the same leaves extracted from a
+  full tree.** Restricting an 86k-leaf tree to 1k leaves inflates its parsimony
+  there, because a globally optimal tree does not induce an optimal subtree. The
+  scaffolded tree is globally better (185,301 vs 185,398) and still scores 8365
+  on such a subset against a de novo 8298.
+- **Do not quote the share of pre-2009 leaves deeper than the median 2013 leaf
+  on its own.** It reads 35% for the pathological baseline tree while the
+  aggregate median gap simultaneously reads -46, because pre-2009 is dominated
+  by shallow pre-2005 leaves. Use the 2006 / 2007 cohort medians.
+
+### How the scaffold is sampled
+
+Quotas are per collection *year*, not per sequence: HA/H3 has eight sequences
+from 1963 and 11,786 from 2024, and a plain random draw of 1000 would take ~150
+from 2024 alone and miss most years before 1991 entirely. Years that cannot fill
+their share hand the remainder back to be redistributed — repeatedly, since a
+redistribution can itself overfill a small year. Sequences with no collection
+date are not candidates, since they carry no information about where on the time
+axis they belong; they are placed later, in the pass that adds every
+non-scaffold sequence, so nothing is dropped.
+
+Each draw uses that randomization's seed, so the backbones differ: on HA/H3 any
+two share only ~26% of their ids, which is what lets the merged DAG keep
+exploring topology space. Note the draw depends on the seed alone and *not* on
+the alignment's order — the sort in `select_scaffold_ids` is deliberate — so the
+shuffle decides only the order the chosen records are written in. On small
+combinations the backbones are necessarily much more alike: NA/N9 draws 1000 of
+just 1827 dated sequences, and any two of its scaffolds share ~72%.
+
+`create_scaffold_alignment` reads `combined_metadata.csv` rather than the
+augmented file. It needs only `collection_date`, and depending on the augmented
+file would put host and geography classification upstream of every tree in the
+pipeline.
+
+`scaffold.vcf` is `temp()` while the full `msa.vcf` is not: it has a single
+consumer, and faToVcf regenerates it in seconds from the scaffold alignment,
+which is kept precisely so that it can.
+
+`build_scaffold_tree` runs usher-sampled and matOptimize in one rule, because
+both take seconds at this size and there is nothing to gain from a checkpoint
+between them. Their full-size equivalents (`create_initial_tree`,
+`optimize_tree`) stay separate because they are the two most expensive steps in
+the pipeline.
+
+`create_initial_tree` takes the scaffold as a MAT (`-i`) rather than as a newick
+(`-t`), because `matUtils extract -t` segfaults in this usher build even on a
+~1600-node tree (reproduced, core dumped), so the routine way of handing the
+optimized scaffold over as a newick is unavailable. Feeding the MAT straight
+through costs nothing either way, since usher re-derives the backbone's states
+from the full VCF. Samples already in the scaffold are skipped rather than
+duplicated: HA/H3's `preopt_tree` holds exactly 86,232 samples and
+`placement_stats.tsv` has 85,231 rows, i.e. 86,232 - 1,001.
+
+### Rerooting: newick space, not `matUtils extract -y`
+
+Issue #49. `matUtils extract -y` rebases the MAT into the new root's coordinate
+frame: the new root is written with zero mutations, so the file stops recording
+how it differs from the reference. That is self-consistent and readable if you
+know the new root's sequence, but it refuses outright when the existing root
+carries a mutation (which broke HA/H3), and the frame shift is implicit —
+nothing records it. Rerooting the topology in newick space instead leaves
+mutation assignment to the MAT-building rule, which reads it off the alignment
+and so keeps the MAT in the reference's frame.
+
+`rebase_final_mat` then performs that frame shift deliberately, for all 16
+combinations alike so that `final_tree.pb.gz` means the same thing everywhere.
+It is pure bookkeeping: every branch below the root already records a
+parent-to-child change independent of what the origin is, so only the root's own
+mutation list (emptied) and each mutation's `ref_nuc` annotation (repointed)
+change. Unlike `-y`, it does not refuse when the root carries mutations, and it
+emits the root sequence rather than discarding it — that discard is what made
+the shift silent in #49.
+
+### Why `usher` and not `matOptimize` builds the final MATs
+
+Both `create_mat_protobuf` and `create_final_mat` annotate a *fixed* topology;
+they do not search for a better one. `matOptimize` is a parsimony optimizer, and
+parsimony is an *unrooted* criterion, so it normalizes the tree at load —
+collapsing zero-mutation branches — even under `-N 0`, and does not preserve the
+input rooting.
+
+That silently broke NA/N1. Its reroot target `EPI_ISL_5878` is the only one of
+the 14 whose terminal branch carries no mutations (the others run 6-87 in
+`sampled_tree.pb.gz`, 5-62 after rerooting), and it was the only one that lost
+its rooting: the root landed 54 mutations away under a 3-way polytomy, 56
+substitutions from the intended root sequence — not a simple collapse into its
+neighbour. Empirically the rooting survives `matOptimize` only where the
+target's terminal branch carries mutations; the exact normalization step
+responsible has not been traced to matOptimize's source. Switching both rules to
+`usher`, which takes the topology as authoritative, fixed it and moved
+`curated_root.fasta` by one position in 2 of 16 combinations. `matOptimize`
+remains correct for `optimize_tree`, which really is topology optimization.
+
+### The sequence-identity gate
+
+`check_tree_sequences` is a standing guard against the class of bug in #49:
+rerooting is a pure re-representation, so every sequence the tree implies must
+survive it unchanged. It runs for every combination, including the two that are
+not rerooted, where it is a cheap tautology.
+
+It also asserts that the tree is rooted where the config asked, because the
+sequence comparison alone cannot tell: both trees are built from the same VCF
+and so agree for any topology.
+
+Everything derived from the final tree — the Taxonium conversions, the
+geographic subtrees, `final_tree.nwk` and the two PastML rules that read it —
+depends on the gate's report rather than merely being listed alongside it in
+`rule all`. That dependency is what makes it a gate. Building one combination by
+targeting its `final_tree.jsonl.gz` produces a DAG that never reaches `rule
+all`, so without those edges the check would be skipped for exactly the workflow
+people use most and a bad tree would be published anyway.
+
+### larch is built from source, not installed from conda
+
+`tree_to_dag` and `larch_merge` have no `conda:` directive, and `snakemake
+--lint` flags both for it. That is accepted, not an oversight: larch is built
+from source into the main flu-usher environment (`environment.yml` carries its
+build and runtime deps, not larch itself), from commit `0ac4146`, built
+2025-10-27.
+
+`envs/larch.yaml` used to point at the packaged `larch-phylo`, and was deleted
+rather than wired up. The package's "0.1.0" version string is a stale
+VERSION-file fallback — conda-build strips `.git`, so its `git describe` never
+runs — not a lower release: it is built from `c2e75a2`, which is the `v0.1.3`
+tag. The real gap is the 5 commits from there to `0ac4146`, and adopting it
+would not have degraded anything quietly, it would have broken outright:
+`fb1bb78` is what added VCF support to `larch-dagutil`, so the packaged binary
+has no `-v` option and `larch_merge` passes one. It also pins `python_abi` 3.8
+and `boost-cpp` 1.76. Packaging larch properly is a separate change that has to
+be validated against the trees it produces.
+
+### Snakemake bookkeeping
+
+**`script_deps`.** Only rules using Snakemake's `script:` directive are
+code-tracked. The scripts invoked as `shell: python scripts/x.py` appear in no
+`input:` block, so editing one leaves Snakemake reporting every downstream
+output up to date. Declaring them as inputs closes that gap. Every script
+imports `utils`, so it is always included.
+
+**Config invalidation.** `download_all_references` deliberately does *not* take
+`config.yaml` as an input. It sits at the head of the DAG, so depending on the
+file's mtime made every config edit — a reroot target, a seed, a filtering
+threshold — re-download the references and re-derive the whole pipeline;
+measured before the change, one altered reroot target re-ran 1235 of 1235 jobs.
+Naming the consumed values in `params:` instead keeps the default `params`
+rerun-trigger precise, and the script still reads the file for the rest.
+
+**Wildcard constraints.** Without them the default wildcard regex is `.+`, which
+matches `/`. A typo in a target path then resolves against the wrong rule with a
+wildcard spanning directory separators, instead of failing.
+
+**Empty input list.** `input_data_md5sums` fails at parse time when no GISAID
+input files are found, rather than degrading silently. With an empty list,
+`md5sum {input} > {output}` becomes a bare `md5sum` reading stdin, which writes
+`d41d8cd98f00b204e9800998ecf8427e  -` and exits 0 — a provenance manifest
+recording nothing. `set -euo pipefail` would not catch it, because
+zero-argument `md5sum` succeeds.
+
+**Thread declarations.** usher detects hardware concurrency when `-T` is
+omitted, so a rule that did not declare `threads` claimed 1 core from the
+scheduler and then spawned 32. Both MAT-building rules declare it and pass it
+through.
+
+**Private scratch directories.** `usher` and `usher-sampled` write
+`final-tree.nh` and other fixed-name files beside their `-d` target, so rules
+that would otherwise share a directory each get a `mktemp -d`. `matUtils`
+prepends `-d` to the `-S` path even when it is absolute and then silently writes
+nothing, which is why `-S` must stay a bare filename.
+
+**One rule per notebook.** The notebooks produce figures unevenly —
+`analyze_alignments` 3, `analyze_dags` 1, `analyze_metadata` 0 — so a single
+`{notebook}` wildcard rule cannot declare them, because an output list cannot
+depend on a wildcard value. Each writes its executed copy under `results/`
+instead of running `--inplace` over the git-tracked source, which rewrote
+tracked files and churned output-cell diffs on every run while declaring only a
+`.done` sentinel.
 
 ## Requirements
 
