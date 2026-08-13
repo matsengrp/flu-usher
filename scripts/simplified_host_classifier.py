@@ -100,7 +100,7 @@ def get_simplified_host_group(host):
         'morphnus', 'necrosyrtes', 'gyps', 'corvus', 'pica', 'columba', 'streptopelia',
         'pygoscelis', 'spheniscus', 'podiceps', 'tachybaptus', 'gallinula', 'anthropoides',
         'passer', 'hirundo', 'zosterops', 'copsychus', 'garrulax', 'gracula', 'stercorarius',
-        'falsco', 'anseriformes'
+        'falsco', 'anseriformes', 'aegypius'
     ]
 
     # Check if the genus matches the first word in the host name
