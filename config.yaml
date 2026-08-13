@@ -25,10 +25,14 @@ input_dirs:
   - "data/H13NX"
   - "data/H14NX"
   - "data/H15NX"
+  # Everything whose H/N pair is not covered above, so that rare subtypes still
+  # reach the internal-segment ("all") trees. Its HA and NA records are dropped
+  # unless their subtype is configured below, so no new combination appears.
+  - "data/HXNX"
   # data/H16NX/ exists on disk but is deliberately excluded: H16 has very little
   # data. Adding it would introduce an HA/H16 combination and shift the internal
   # segment ("all") trees, for negligible gain. If you add it here, also expect
-  # results/input_data_md5sums.txt to grow from 90 to 92 entries.
+  # results/input_data_md5sums.txt to grow from 110 to 112 entries.
 
 # Segments to analyze
 segments:
