@@ -2,13 +2,12 @@
 Cut an alignment down to a small subset of sequences spread evenly over
 collection time, to be built into a scaffold tree.
 
-The tree search places sequences in whatever order the alignment happens to be
-in, and on HA/H3 it ends up with a high-level shape that is measurably not the
-most parsimonious one available: sequences collected from 2006 on sit ~70
-branches deeper on the trunk than 2005's without a matching rise in divergence
-(issue #53). Optimising ~1000 sequences is a far easier search than optimising
-86,000, so the pipeline now builds a backbone from a time-spread subset first
-and places everything else onto it.
+Placing 86,000 sequences onto an empty tree ends up with a high-level shape that
+is measurably not the most parsimonious one available: on HA/H3, sequences
+collected from 2006 on sit ~70 branches deeper on the trunk than 2005's without a
+matching rise in divergence (issue #53). Optimising ~1000 sequences is a far
+easier search than optimising 86,000, so the pipeline now builds a backbone from
+a time-spread subset first and places everything else onto it.
 
 "Evenly over time" means an equal quota per collection year, not per sequence:
 the eight 1963 HA/H3 sequences say far more about the shape of the trunk than
@@ -22,8 +21,17 @@ that adds every non-scaffold sequence to the backbone, so nothing is dropped.
 
 The first record is taken to be the curated reference and is always kept, at the
 top: faToVcf reads the reference off the alignment's first record. Everything
-after it is emitted in the order it appeared, so a randomised input alignment
-yields a randomised scaffold and each randomisation gets a different backbone.
+after it is emitted in the order it appeared, so the scaffold reads back in the
+same order as the alignment it came from.
+
+What makes each randomisation's backbone different is the seed, not that order.
+The draw is deliberately independent of input order -- each year's candidates are
+sorted before sampling -- so drawing from a differently shuffled alignment under
+the same seed returns exactly the same set. On HA/H3 any two randomisations share
+only ~26% of their scaffold ids, which is where the diversity comes from. (An
+earlier version of this docstring said usher-sampled "places sequences greedily
+in alignment order", which overstates it: -A is --sort-before-placement-3, so it
+sorts by ambiguous-base count and alignment order is only a tie-break.)
 """
 
 import argparse

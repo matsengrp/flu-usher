@@ -8,11 +8,13 @@ random draw of 1000 from HA/H3 would take ~150 sequences from 2024 alone and
 would miss most years before 1991 entirely, which is exactly the backbone the
 search cannot find on its own (issue #53).
 
-The second thing under test is output order. usher-sampled places greedily in
-file order, so the scaffold has to come out in the randomized alignment's order
-and not in sampling order -- otherwise every randomization would build its
-backbone from the same sequence of placements and the merged DAG would lose the
-topological diversity the randomizations exist to create.
+The second thing under test is output order: the scaffold comes out in the
+randomized alignment's order rather than in sampling order, so that it reads back
+in the same order as the alignment it was cut from. What actually keeps the
+randomizations' backbones distinct is the per-randomization seed -- the draw is
+independent of input order by design, which `test_does_not_depend_on_candidate_order`
+pins -- so `test_output_follows_input_order_not_sampling_order` is guarding a
+weaker property than an earlier version of this docstring claimed.
 """
 
 import lzma

@@ -315,27 +315,41 @@ rule create_vcf:
 
 # Build a time-spread backbone before placing the full alignment (issue #53).
 #
-# usher-sampled places sequences greedily in alignment order onto an empty tree,
-# and on HA/H3 that settled on a high-level shape which is measurably not the
-# most parsimonious one available: sequences collected from 2006 on sat ~70
-# branches deeper on the trunk than 2005's, with no matching rise in divergence,
-# and 35% of pre-2008 leaves sat deeper than the median 2013 leaf. Scaffolding
-# fixed both at once, which is what says the search rather than the data was at
-# fault: on the same 86,232 sequences, HA/H3's final_tree went from 185,398 to
-# 185,299 parsimony, 2006's median depth from 161 to 92, and that 35% to 0%.
+# Placing all 86,232 HA/H3 sequences onto an empty tree settled on a high-level
+# shape that is measurably not the most parsimonious one available: sequences
+# collected from 2006 on sat ~70 branches deeper on the trunk than 2005's, with
+# no matching rise in divergence. Scaffolding fixed that and improved the score
+# at the same time, which is what says the search rather than the data was at
+# fault. On the same 86,232 sequences, HA/H3's final_tree went from 185,398 to
+# 185,301 parsimony and 2006's median depth from 161 to 93.
 #
-# Do not compare a scaffolded subset against the same leaves extracted from a
-# full tree -- an earlier version of this comment did, and the comparison is
-# confounded. Restricting an 86k-leaf tree to a 1k-leaf subset inflates its
-# parsimony on that subset, because a globally optimal tree does not induce an
-# optimal subtree. Only whole-tree scores on a fixed sequence set compare.
+# The clearest evidence is per-randomization, not on the merged result. Rerooted
+# and measured by cohort, 4 of the 10 baseline opt_trees had 2006 sitting 18-28
+# branches *deeper* than 2013; with a scaffold, 0 of 10 do, and 9 of 10 are clean
+# at 2/2571. So the search itself was part of the problem -- an earlier version of
+# this comment claimed the search was never at fault, which was wrong, and rested
+# on the two randomizations that happened to be clean.
+#
+# Two measurement traps, both of which earlier versions of this comment fell into.
+# Do not compare a scaffolded subset against the same leaves extracted from a full
+# tree: restricting an 86k-leaf tree to 1k leaves inflates its parsimony there,
+# because a globally optimal tree does not induce an optimal subtree. The
+# scaffolded tree is globally better (185,301 vs 185,398) and still scores 8365 on
+# such a subset against a de novo 8298. And do not quote the share of pre-2009
+# leaves deeper than the median 2013 leaf on its own: it reads 35% for the
+# pathological baseline tree and -46 on the aggregate median gap at the same time,
+# because pre-2009 is dominated by shallow pre-2005 leaves. Use the 2006/2007
+# cohort medians.
 #
 # Optimising ~1000 sequences is a far easier search than optimising 86,232, so
 # each randomization builds its own backbone from a time-spread subset first.
-# The subset is drawn with that randomization's seed and written in the
-# randomized alignment's order, so backbones stay as diverse across
-# randomizations as the placements they seed -- which is what the merged DAG
-# needs in order to keep exploring topology space.
+# Each draw uses that randomization's seed, so the backbones differ: on HA/H3 any
+# two share only ~26% of their ids, which is what lets the merged DAG keep
+# exploring topology space. Note the draw depends on the seed alone and not on the
+# alignment's order -- the sort in select_scaffold_ids is deliberate -- so the
+# shuffle decides only the order the chosen records are written in. On small
+# combinations the backbones are necessarily much more alike (NA/N9 draws 1000 of
+# just 1827 dated sequences, and any two of its scaffolds share ~72%).
 rule create_scaffold_alignment:
     conda: "envs/python.yaml"
     input:
@@ -438,11 +452,17 @@ rule create_initial_tree:
         stderr="logs/{segment}/{subtype}/randomized_{n}/usher-sampled.stderr"
     shell:
         # -i, not -t: matUtils extract -t segfaults in this usher build even on a
-        # 1592-node tree, so there is no way to hand the optimised scaffold over
-        # as a newick. Feeding the MAT straight through costs nothing -- placing
-        # all 86,232 HA/H3 sequences scored 189,532 via -i against 189,536 via a
-        # newick, so usher re-derives the backbone's states from the full VCF
-        # either way. Samples already in the scaffold are skipped, not duplicated.
+        # ~1600-node tree (reproduced, core dumped), so the routine way of handing
+        # the optimised scaffold over as a newick is unavailable. Feeding the MAT
+        # straight through costs nothing either way, since usher re-derives the
+        # backbone's states from the full VCF. Samples already in the scaffold are
+        # skipped rather than duplicated: HA/H3's preopt_tree holds exactly 86,232
+        # samples and placement_stats.tsv has 85,231 rows, i.e. 86,232 - 1,001.
+        #
+        # A -i-versus-newick parsimony pair quoted here previously (189,532 against
+        # 189,536) is not reproducible from anything on disk and has been removed
+        # rather than restated; the newick side of it was obtained by dumping the
+        # MAT's newick field directly, not via matUtils extract -t.
         """
         usher-sampled -T {threads} -A \
             -i {input.scaffold} \
