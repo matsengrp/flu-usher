@@ -71,7 +71,9 @@ snakemake --cores 8 --use-conda <target> --forcerun <rule_name>
 # reroot target re-ran 1235 of 1240 jobs, identically with and without the
 # params trigger. (The five spared were parse_gisaid_data, augment_metadata, the
 # two annotation rules and input_data_md5sums -- everything expensive
-# re-derived.) The DAG is 1346 jobs since the scaffold rules were added.
+# re-derived.) The DAG is 1720 jobs since the scaffold rules added three
+# 160-job rules; count it with `snakemake -n --forceall`, as a plain `-n`
+# reports only the jobs that are out of date.
 snakemake -n --use-conda <target> --rerun-triggers mtime
 
 # Generate workflow visualization
