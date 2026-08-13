@@ -87,6 +87,21 @@ max_frac_ambig: 0.00
 # Number of randomizations for alignment reordering
 n_randomizations: 10
 
+# Number of sequences in each randomization's scaffold tree, excluding the
+# reference (issue #53). Each randomization builds a backbone from this many
+# sequences drawn evenly across collection year, then places every remaining
+# sequence onto it, rather than placing all of them onto an empty tree.
+#
+# Keep this well below the number of *dated* sequences in the smallest
+# combination, which is the real ceiling -- undated sequences are never scaffold
+# candidates, so a combination's total count overstates the headroom. NA/N9 is
+# the tightest at 1827 dated of 2007 total, leaving 827 to spare at 1000; the
+# next tightest are HA/H7 (2586 dated) and NA/N8 (2669 dated of 4415, i.e. 40%
+# undated). If the scaffold were to swallow every dated sequence, usher-sampled
+# would be left with nothing to place and would exit 1 with "No samples to
+# place".
+scaffold_n_taxa: 1000
+
 # Seed for sampling a single history out of the trimmed DAG (rule create_newick).
 # historydag's fast_sample() draws from Python's global `random`, so without this
 # every run produces a different sampled_tree.nh -- and therefore different

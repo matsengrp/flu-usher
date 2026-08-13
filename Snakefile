@@ -2,9 +2,8 @@
 import glob
 configfile: "config.yaml"
 
-# Without these the default wildcard regex is `.+`, which matches `/`. A typo in
-# a target path then resolves against the wrong rule with a wildcard spanning
-# directory separators instead of failing.
+# Narrow the default `.+` wildcard regex so that no wildcard spans a directory
+# separator. See "Snakemake bookkeeping" in README.md.
 wildcard_constraints:
     segment="[A-Za-z0-9]+",
     subtype="[A-Za-z0-9]+",
@@ -13,11 +12,8 @@ wildcard_constraints:
 
 
 
-# Only rules using Snakemake's `script:` directive are code-tracked. The ten
-# scripts invoked as `shell: python scripts/x.py` appear in no input: block, so
-# editing one leaves Snakemake reporting every downstream output up to date.
-# Declaring them as inputs closes that gap. Every script imports utils, so it is
-# always included.
+# Declare shell-invoked scripts as rule inputs so that editing one invalidates
+# its downstream outputs. See "Snakemake bookkeeping" in README.md.
 def script_deps(*script_names, include_utils=True):
     """Input paths for a shell-invoked script plus the modules it imports."""
     deps = ["scripts/" + name for name in script_names]
@@ -25,19 +21,15 @@ def script_deps(*script_names, include_utils=True):
 
 
 # Discover every GISAID FASTA + XLS file across the configured input dirs at
-# parse time so the md5 manifest rule can list them as explicit inputs and be
-# reinvalidated whenever any of them change.
+# parse time, so that input_data_md5sums can list them as explicit inputs.
 INPUT_DATA_FILES = sorted(
     f
     for d in config["input_dirs"]
     for f in glob.glob(f"{d}/*.fasta") + glob.glob(f"{d}/*.xls")
 )
 
-# Fail at parse time rather than let input_data_md5sums degrade silently. With an
-# empty list, `md5sum {input} > {output}` becomes a bare `md5sum` reading stdin,
-# which writes "d41d8cd98f00b204e9800998ecf8427e  -" and exits 0 -- a provenance
-# manifest recording nothing. `set -euo pipefail` would not catch it, because
-# zero-argument md5sum succeeds.
+# Fail at parse time rather than let input_data_md5sums silently hash stdin and
+# exit 0. See "Snakemake bookkeeping" in README.md.
 if not INPUT_DATA_FILES:
     raise WorkflowError(
         "No GISAID input files found. Looked for *.fasta and *.xls under: "
@@ -182,14 +174,9 @@ rule download_all_references:
     input:
         script=script_deps("download_ref_seq.py")
     params:
-        # The values this rule actually consumes, declared so the default
-        # `params` rerun-trigger hashes them. config.yaml is deliberately NOT an
-        # input: this rule sits at the head of the DAG, so depending on the
-        # file's mtime made every config edit -- a reroot target, a seed, a
-        # filtering threshold -- re-download the references and re-derive the
-        # whole pipeline. Measured before this change: one reroot target
-        # changed re-ran 1235 of 1235 jobs. Naming the values instead keeps the
-        # trigger precise; the script still reads the file for the rest.
+        # The values this rule consumes, declared so the default `params`
+        # rerun-trigger hashes them. config.yaml is deliberately NOT an input --
+        # see "Config invalidation" in README.md.
         references=config["references"],
         ha_subtypes=config["ha_subtypes"],
         na_subtypes=config["na_subtypes"],
@@ -313,15 +300,101 @@ rule create_vcf:
         | faToVcf -includeRef -ambiguousToN -includeNoAltN stdin {output} 2> {log}
         """
 
-# Create initial tree with usher-sampled
+# Draw scaffold_n_taxa sequences spread evenly over collection year, to be built
+# into a backbone tree before the full alignment is placed (issue #53). Each
+# randomization draws with its own seed, so the backbones differ. Why the backbone
+# exists and how the draw works: see "Why each tree search starts from a
+# time-spread scaffold" in README.md.
+rule create_scaffold_alignment:
+    conda: "envs/python.yaml"
+    input:
+        msa="results/{segment}/{subtype}/randomized_{n}/msa.fasta.xz",
+        # combined_metadata.csv, not the augmented one: only collection_date is
+        # needed here.
+        metadata="results/combined_metadata.csv",
+        script=script_deps("create_scaffold_alignment.py")
+    output:
+        msa="results/{segment}/{subtype}/randomized_{n}/scaffold_msa.fasta.xz",
+        samples="results/{segment}/{subtype}/randomized_{n}/scaffold_samples.txt"
+    params:
+        n_taxa=config["scaffold_n_taxa"],
+        seed=lambda wildcards: int(wildcards.n)
+    log:
+        "logs/{segment}/{subtype}/randomized_{n}/create_scaffold_alignment.log"
+    shell:
+        """
+        python scripts/create_scaffold_alignment.py \
+            --alignment {input.msa} \
+            --metadata {input.metadata} \
+            --output-alignment {output.msa} \
+            --output-samples {output.samples} \
+            --n-taxa {params.n_taxa} \
+            --seed {params.seed} \
+            &> {log}
+        """
+
+# Convert the scaffold alignment to VCF, exactly as create_vcf does for the full
+# alignment. Separate rule because faToVcf lives in its own environment.
+rule create_scaffold_vcf:
+    conda: "envs/fatovcf.yaml"
+    input:
+        msa="results/{segment}/{subtype}/randomized_{n}/scaffold_msa.fasta.xz"
+    output:
+        # temp(), unlike the full msa.vcf: single consumer, and regenerated in
+        # seconds from the scaffold alignment.
+        temp("results/{segment}/{subtype}/randomized_{n}/scaffold.vcf")
+    log:
+        "logs/{segment}/{subtype}/randomized_{n}/create_scaffold_vcf.log"
+    shell:
+        """
+        xzcat {input.msa} \
+        | faToVcf -includeRef -ambiguousToN -includeNoAltN stdin {output} 2> {log}
+        """
+
+# Build and optimize the backbone tree from the scaffold alignment alone.
+# usher-sampled and matOptimize share one rule here because both run in seconds
+# at this size; their full-size equivalents stay separate.
+rule build_scaffold_tree:
+    conda: "envs/usher.yaml"
+    input:
+        vcf="results/{segment}/{subtype}/randomized_{n}/scaffold.vcf"
+    output:
+        tree="results/{segment}/{subtype}/randomized_{n}/scaffold_tree.pb.gz"
+    threads: 2
+    log:
+        "logs/{segment}/{subtype}/randomized_{n}/build_scaffold_tree.log"
+    shell:
+        # A private scratch dir, because usher-sampled writes fixed-name files
+        # beside its -d target that would collide with create_initial_tree's.
+        # -n on matOptimize suppresses intermediate protobufs: at this size
+        # there is no long run to resume.
+        """
+        TMPD=$(mktemp -d)
+        trap "rm -rf $TMPD" EXIT
+        echo '()' > $TMPD/emptyTree.nwk
+        usher-sampled -T {threads} -A \
+            -t $TMPD/emptyTree.nwk \
+            -v {input.vcf} \
+            -d $TMPD/ \
+            -o $TMPD/scaffold_preopt.pb.gz \
+            --optimization_radius 0 --batch_size_per_process 5 \
+            &> {log}
+        matOptimize -T {threads} -m 0.00000001 -M 1 -n \
+            -i $TMPD/scaffold_preopt.pb.gz \
+            -v {input.vcf} \
+            -o $PWD/{output.tree} \
+            &>> {log}
+        """
+
+# Place every remaining sequence onto the scaffold with usher-sampled
 # TODO add this arg back in? -e 5
 rule create_initial_tree:
     conda: "envs/usher.yaml"
     input:
-        vcf="results/{segment}/{subtype}/randomized_{n}/msa.vcf"
+        vcf="results/{segment}/{subtype}/randomized_{n}/msa.vcf",
+        scaffold="results/{segment}/{subtype}/randomized_{n}/scaffold_tree.pb.gz"
     output:
-        tree="results/{segment}/{subtype}/randomized_{n}/preopt_tree.pb.gz",
-        empty_tree=temp("results/{segment}/{subtype}/randomized_{n}/emptyTree.nwk")
+        tree="results/{segment}/{subtype}/randomized_{n}/preopt_tree.pb.gz"
     params:
         outdir="results/{segment}/{subtype}/randomized_{n}"
     threads: 2
@@ -329,10 +402,12 @@ rule create_initial_tree:
         stdout="logs/{segment}/{subtype}/randomized_{n}/usher-sampled.log",
         stderr="logs/{segment}/{subtype}/randomized_{n}/usher-sampled.stderr"
     shell:
+        # -i, not -t: the scaffold is handed over as a MAT rather than a newick,
+        # and samples already in it are skipped rather than duplicated. See
+        # "How the scaffold is sampled" in README.md.
         """
-        echo '()' > {output.empty_tree}
         usher-sampled -T {threads} -A \
-            -t {output.empty_tree} \
+            -i {input.scaffold} \
             -v {input.vcf} \
             -d {params.outdir}/ \
             -o {output.tree} \
@@ -360,22 +435,11 @@ rule optimize_tree:
             &> {log}
         """
 
-# Convert optimized trees to DAGs
-# larch has no `conda:` directive, and snakemake --lint flags both rules for it.
+# Convert optimized trees to DAGs.
+# No `conda:` directive, and snakemake --lint flags both larch rules for it.
 # That is accepted, not an oversight: larch is built from source into the main
-# flu-usher environment (environment.yml carries its build and runtime deps,
-# not larch itself), from commit 0ac4146, built 2025-10-27.
-#
-# envs/larch.yaml used to sit here pointing at the packaged larch-phylo, and was
-# deleted rather than wired up. Note the package's "0.1.0" version string is a
-# stale VERSION-file fallback -- conda-build strips .git, so its `git describe`
-# never runs -- not a lower release: it is built from c2e75a2, which is the
-# v0.1.3 tag. The real gap is the 5 commits from there to 0ac4146, and adopting
-# it would not have degraded anything quietly, it would have broken outright:
-# fb1bb78 is what added VCF support to larch-dagutil, so the packaged binary has
-# no -v option and larch_merge below passes one. It also pins python_abi 3.8 and
-# boost-cpp 1.76. Packaging larch properly is a separate change that has to be
-# validated against the trees it produces.
+# flu-usher environment, from commit 0ac4146, built 2025-10-27. See "larch is
+# built from source" in README.md.
 rule tree_to_dag:
     input:
         tree="results/{segment}/{subtype}/randomized_{n}/opt_tree.pb.gz",
@@ -466,21 +530,16 @@ rule create_mat_protobuf:
         vcf_file="results/{segment}/{subtype}/randomized_0/msa.vcf"
     output:
         protobuf_name="results/{segment}/{subtype}/sampled_tree.pb.gz"
-    # usher detects hardware concurrency when -T is omitted, so an undeclared
-    # rule claimed 1 core from the scheduler and then span 32. Declare and pass
-    # it through, as create_alignment and optimize_tree already do.
+    # usher grabs every core unless told otherwise; see "Thread declarations"
+    # in README.md.
     threads: config["threads"]
     log:
         "logs/{segment}/{subtype}/create_mat_protobuf.log"
     shell:
-        # usher, not matOptimize: this step annotates a fixed topology, it does
-        # not search for a better one. matOptimize is a parsimony optimiser, and
-        # parsimony is an unrooted criterion, so it normalises the tree at load
-        # -- collapsing zero-mutation branches -- even under -N 0. That discards
-        # the rooting, which broke NA/N1 (see create_final_mat). usher takes the
-        # topology as authoritative. -d gets a private scratch dir because usher
-        # writes final-tree.nh beside its output, which would otherwise collide
-        # with the other MAT rule writing into the same combination directory.
+        # usher, not matOptimize: this step annotates a fixed topology and must
+        # keep it, rooting included. See "Why usher and not matOptimize" in
+        # README.md. -d gets a private scratch dir because usher writes
+        # final-tree.nh beside its output.
         """
         TMPD=$(mktemp -d)
         trap "rm -rf $TMPD" EXIT
@@ -505,15 +564,10 @@ def final_mat_source(wildcards):
     return f"{base}/sampled_tree.pb.gz"
 
 
-# Reroot in newick space rather than with `matUtils extract -y`. That flag
-# rebases the MAT into the new root's coordinate frame: the new root is written
-# with zero mutations, so the file stops recording how it differs from the
-# reference. That is self-consistent and readable if you know the new root's
-# sequence, but it refuses outright when the existing root carries mutations
-# (which broke HA/H3), and the frame shift is implicit -- nothing records it.
-# See issue #49. Rerooting the topology here leaves mutation assignment to
-# matOptimize below, which reads it off the alignment, keeping the MAT in the
-# reference's frame.
+# Reroot the sampled newick at the configured leaf. Done in newick space rather
+# than with `matUtils extract -y`, so that mutation assignment is left to the
+# MAT-building rule below and the MAT stays in the reference's frame. See
+# "Rerooting" in README.md and issue #49.
 rule reroot_newick:
     conda: "envs/ete3.yaml"
     input:
@@ -551,13 +605,8 @@ rule create_final_mat:
         "logs/{segment}/{subtype}/create_final_mat.log"
     shell:
         # usher rather than matOptimize, because this step must preserve the
-        # rooting reroot_newick just established. matOptimize normalises the
-        # tree at load even with -N 0 and does not preserve the input rooting.
-        # Empirically it survives only where the reroot target's terminal branch
-        # carries mutations: NA/N1's EPI_ISL_5878 is the one target of 14 whose
-        # branch is 0 (the others run 6-87 here), and the one that lost its
-        # rooting -- its root landed 54 mutations away, 56 substitutions from
-        # the intended root sequence. usher keeps the topology as given.
+        # rooting reroot_newick just established. See "Why usher and not
+        # matOptimize" in README.md.
         """
         if [ -n "{params.new_root}" ]; then
             TMPD=$(mktemp -d)
@@ -572,11 +621,9 @@ rule create_final_mat:
 
 
 # Move the tree's origin from the reference onto its own root, so the root
-# carries no mutations and its sequence ships alongside. Pure bookkeeping: every
-# branch below the root already records a parent-to-child change, independent of
-# what the origin is, so only the root's own mutation list and the ref_nuc
-# annotations move. Applied to all 16 combinations, rerooted or not, so
-# final_tree.pb.gz means the same thing everywhere.
+# carries no mutations and its sequence ships alongside as final_tree_root.fasta.
+# Applied to all 16 combinations, rerooted or not, so final_tree.pb.gz means the
+# same thing everywhere. See "Rerooting" in README.md.
 rule rebase_final_mat:
     conda: "envs/taxonium.yaml"
     input:
@@ -602,10 +649,9 @@ rule rebase_final_mat:
         """
 
 
-# Standing guard against the class of bug in #49: rerooting is a pure
-# re-representation, so every sequence the tree implies must survive it
-# unchanged. Runs for every combination, including the two that are not
-# rerooted, where it is a cheap tautology.
+# Dump the per-sample mutation paths of the sampled and final trees, plus the
+# final newick, for the sequence-identity gate below. See "The sequence-identity
+# gate" in README.md.
 rule extract_tree_sequence_paths:
     conda: "envs/usher.yaml"
     input:
@@ -630,6 +676,9 @@ rule extract_tree_sequence_paths:
         """
 
 
+# Assert that no sample's sequence changed across rerooting, and that the final
+# tree is rooted where config asked. Runs for every combination, including the
+# ones that are not rerooted, where it is a cheap tautology.
 rule check_tree_sequences:
     conda: "envs/python.yaml"
     input:
@@ -761,11 +810,8 @@ rule convert_to_taxonium:
     conda: "envs/taxonium.yaml"
     input:
         final_tree="results/{segment}/{subtype}/final_tree.pb.gz",
-        # Depending on the gate's report, not just listing it in `rule all`, is
-        # what makes it a gate. CLAUDE.md documents building one combination by
-        # targeting its final_tree.jsonl.gz; that DAG never reaches `rule all`,
-        # so without this edge the check is skipped for exactly the workflow
-        # people use most, and a bad tree gets published anyway.
+        # Nothing derived from the final tree ships until the gate has passed.
+        # See "The sequence-identity gate" in README.md.
         check="results/{segment}/{subtype}/reroot_sequence_check.txt",
         metadata="results/combined_metadata_augmented.csv"
     output:
@@ -812,8 +858,7 @@ rule extract_geographic_subtree:
     conda: "envs/usher.yaml"
     input:
         tree="results/{segment}/{subtype}/final_tree.pb.gz",
-        # See convert_to_taxonium: nothing derived from the final tree ships
-        # until the gate has passed.
+        # See convert_to_taxonium.
         check="results/{segment}/{subtype}/reroot_sequence_check.txt",
         samples="results/{segment}/{subtype}/geographic_trees/{geo_group}_samples.txt"
     output:
@@ -967,14 +1012,10 @@ ALL_FINAL_TREES = (
              segment=[s for s in config["segments"] if s not in ["HA", "NA"]])
 )
 
-# The notebooks produce figures unevenly -- analyze_alignments 3, analyze_dags 1,
-# analyze_metadata 0 -- so a single {notebook} wildcard rule cannot declare them:
-# an output list cannot depend on the wildcard value. Hence one rule per
-# notebook, sharing the input list above.
-#
-# Each writes its executed copy to results/ instead of running --inplace over the
-# git-tracked source, which rewrote tracked files and churned output-cell diffs
-# on every run while declaring only a .done sentinel.
+# One rule per notebook, sharing the input list above, because they produce
+# figures unevenly and an output list cannot depend on a wildcard value. Each
+# writes its executed copy to results/ rather than --inplace over the tracked
+# source. See "One rule per notebook" in README.md.
 
 rule execute_analyze_alignments:
     conda: "envs/python.yaml"

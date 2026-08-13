@@ -6,6 +6,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Flu-UShER Pipeline - A Snakemake pipeline for building phylogenetic trees of influenza virus sequences using UShER. The pipeline processes influenza sequences by segment and subtype, organizing HA and NA segments by their specific subtypes (e.g., H1, H3, N1, N2) while combining all subtypes for internal segments (PB2, PB1, PA, NP, MP, NS).
 
+Design rationale — why the pipeline is built the way it is, with the measurements
+behind each decision — lives in the "Design Notes" section of `README.md`. The
+Snakefile's own comments say only what each rule does and point there. Keep it
+that way: when you change a rule's reasoning, update `README.md`, not the
+Snakefile comment.
+
 ## Key Commands
 
 ### Environment Setup
@@ -61,10 +67,11 @@ snakemake --cores 8 --use-conda <target> --forcerun <rule_name>
 # re-runs the reroot rules and leaves the alignments alone. It did not used to
 # be -- download_all_references took config.yaml as an input at the head of the
 # DAG, so any edit re-downloaded the references and cascaded through
-# everything. Measured before that change: one reroot target re-ran 1235 of the
-# DAG's 1240 jobs, identically with and without the params trigger. (The five
-# spared are parse_gisaid_data, augment_metadata, the two annotation rules and
-# input_data_md5sums -- everything expensive re-derived.)
+# everything. Measured before that change, on the 1240-job DAG of the time: one
+# reroot target re-ran 1235 of 1240 jobs, identically with and without the
+# params trigger. (The five spared were parse_gisaid_data, augment_metadata, the
+# two annotation rules and input_data_md5sums -- everything expensive
+# re-derived.) The DAG is 1346 jobs since the scaffold rules were added.
 snakemake -n --use-conda <target> --rerun-triggers mtime
 
 # Generate workflow visualization
@@ -93,6 +100,9 @@ results/
 │   │   ├── randomized_{0,1,2,...}/  # Multiple randomizations
 │   │   │   ├── msa.fasta.xz
 │   │   │   ├── msa.vcf
+│   │   │   ├── scaffold_msa.fasta.xz            # time-spread subset
+│   │   │   ├── scaffold_samples.txt             # ids drawn into it
+│   │   │   ├── scaffold_tree.pb.gz              # backbone the full placement seeds from
 │   │   │   ├── preopt_tree.pb.gz
 │   │   │   ├── opt_tree.pb.gz
 │   │   │   └── dag.pb
@@ -141,6 +151,8 @@ results/
    - Reference sequences for each segment-subtype
    - Quality filtering thresholds (max_frac_gaps, max_frac_ambig)
    - Number of randomizations for tree building (n_randomizations)
+   - Number of taxa drawn into each randomization's scaffold tree (scaffold_n_taxa)
+   - Seed for sampling a tree out of the trimmed DAG (tree_sample_seed)
    - Number of threads for parallel execution
    - Geographic groups to extract for geographic subtree analysis (geographic_groups_to_extract)
    - Optional rerooting specifications for final trees (reroot)
@@ -150,6 +162,7 @@ results/
    - `download_ref_seq.py`: Downloads reference sequences from NCBI and creates Nextclade datasets
    - `curate_and_extract_coding_seqs.py`: Curates alignments by quality metrics, extracts coding regions and per-gene unaligned coding sequences
    - `randomize_alignment.py`: Creates randomized versions of alignments for multiple tree builds
+   - `create_scaffold_alignment.py`: Subsets an alignment to `scaffold_n_taxa` sequences spread evenly over collection year, for the backbone tree each randomization is seeded with
    - `trim_dag.py`: Trims suboptimal trees from merged DAGs
    - `convert_DAG_protobuf_to_newick_samples.py`: Samples representative trees from DAGs
    - `reroot_newick.py`: Reroots a newick at a named leaf via ete3 `set_outgroup`; validates the target exists, is unique, is a leaf, and ends up at the root
@@ -163,7 +176,7 @@ results/
    - `prepare_host_annotation.py`: Builds the global 2-column (isolate_id, host_group) CSV consumed by PastML
    - `prepare_subtype_annotation.py`: Builds the global 2-column (isolate_id, subtype) CSV consumed by PastML, normalizing the raw GISAID `subtype` ("A / H5N1") to `H*N*` form inline
    - `utils.py`: Shared helpers imported by the above — `open_sequence_file()` for plain/gz/xz IO, `setup_logging()`, `sanitize_id()`, and the GFF parsing used to derive coding coordinates
-   - `test_curate_and_extract_coding_seqs.py`, `test_parse_gisaid_data.py`, `test_create_samples_file.py`, `test_check_tree_sequences.py`, `test_reroot_newick.py`: unittest suites
+   - `test_*.py`: ten unittest suites, one per tested module (see Important Notes for counts)
 
 4. **notebooks/**: Jupyter notebooks for analysis and development
    - `analyze_alignments.ipynb`: Analyzes sequence statistics across segments/subtypes
@@ -178,17 +191,17 @@ results/
 5. **Create Unaligned Coding Sequences** → Extracts unaligned coding sequences from curated alignments
 6. **Randomize Alignments** → Creates multiple randomized versions of alignment (n_randomizations)
 7. **Create VCF** → Converts each randomized FASTA to variant format for UShER
-8. **Build Initial Trees** → Creates initial parsimony tree for each randomization with usher-sampled
+8. **Build Initial Trees** → Each randomization first draws a `scaffold_n_taxa` subset spread evenly over collection year (`create_scaffold_alignment`), builds and optimizes a backbone tree from it alone (`build_scaffold_tree`), then places every remaining sequence onto that backbone with usher-sampled (`create_initial_tree`, `-i` not `-t`). Placing all 86,232 HA/H3 sequences onto an *empty* tree instead settled on a measurably worse high-level shape — issue #53. Why the backbone exists, how the draw works, and the two measurement traps involved: see the "Design Notes" section of `README.md`.
 9. **Optimize Trees** → Refines topology for each tree with matOptimize
 10. **Convert to DAGs** → Converts each optimized tree to DAG representation (larch-usher)
 11. **Merge DAGs** → Combines all DAGs into single merged DAG (larch-dagutil)
 12. **Trim DAG** → Removes suboptimal trees from merged DAG
 13. **Sample Tree** → Samples a representative tree from trimmed DAG
 14. **Create MAT Protobuf** → Converts sampled tree to MAT protobuf format
-15. **Reroot Tree** → Where `reroot` is configured, reroots the *newick* at the named leaf with ete3 `set_outgroup` (`reroot_newick`), then rebuilds the MAT from the alignment with `usher` (`create_final_mat`), which keeps its mutations recorded against the reference. Combinations with no configured reroot symlink `reference_origin_tree.pb.gz` to `sampled_tree.pb.gz`; step 16 then runs on all 16 alike, so `final_tree.pb.gz` is always a real file and always means the same thing. Replaced `matUtils extract -y`, which moved the MAT's origin onto the new root and refused outright when the pre-reroot root carried a mutation (issue #49). `check_tree_sequences` then guards that the MAT is still recorded against the reference, and asserts the tree is rooted where config asked — the sequence comparison alone cannot tell, since both trees are built from the same VCF and so agree for any topology.
+15. **Reroot Tree** → Where `reroot` is configured, reroots the *newick* at the named leaf with ete3 `set_outgroup` (`reroot_newick`), then rebuilds the MAT from the alignment with `usher` (`create_final_mat`), which keeps its mutations recorded against the reference. Combinations with no configured reroot symlink `reference_origin_tree.pb.gz` to `sampled_tree.pb.gz`; step 16 then runs on all 16 alike, so `final_tree.pb.gz` is always a real file and always means the same thing. Replaced `matUtils extract -y` (issue #49). `check_tree_sequences` then guards that the MAT is still recorded against the reference, and asserts the tree is rooted where config asked. See "Rerooting" and "The sequence-identity gate" in the Design Notes of `README.md`.
 
-    Both MAT-building rules (`create_mat_protobuf`, `create_final_mat`) use `usher`, not `matOptimize`. These steps annotate a fixed topology; they do not search for a better one. `matOptimize` is a parsimony optimiser, and parsimony is an *unrooted* criterion, so it normalises the tree at load even under `-N 0` and does not preserve the input rooting. That silently broke NA/N1: its reroot target `EPI_ISL_5878` is the only one of the 14 whose terminal branch carries no mutations (the others run 6–87 in `sampled_tree.pb.gz`, 5–62 after rerooting), and it was the only one that lost its rooting. Empirically the rooting survives `matOptimize` only when the target's terminal branch carries mutations; the exact normalisation step responsible has not been traced to matOptimize's source, and the observed failure is not a simple collapse — NA/N1's root landed 54 mutations away under a 3-way polytomy, 56 substitutions from the intended root sequence, not merged into its neighbour. Switching both rules to `usher` fixed it and moved `curated_root.fasta` by one position in 2 of 16 combinations. `matOptimize` remains correct for `optimize_tree`, which really is topology optimisation.
-16. **Rebase MAT onto its Root** → `rebase_final_mat` moves the tree's origin from `curated_reference.fasta` onto the tree's own root, so the root carries no mutations and its sequence ships as `final_tree_root.fasta`. Reconstructing a sample from `final_tree.pb.gz` therefore starts from that file, not from the curated reference. This is pure bookkeeping: every branch below the root already records a parent-to-child change and is unaffected, so only the root's own mutation list (emptied) and each mutation's `ref_nuc` annotation (repointed) change. It is the same operation `matUtils extract -y` performed, minus its two defects — refusing whenever the root carried mutations, and discarding the root sequence instead of emitting it, which is what made the shift silent in issue #49.
+    Both MAT-building rules (`create_mat_protobuf`, `create_final_mat`) use `usher`, not `matOptimize`, because they annotate a fixed topology and must keep it, rooting included. `matOptimize` remains correct for `optimize_tree`, which really is topology optimisation. Why, and the NA/N1 failure that established it: see "Why `usher` and not `matOptimize`" in the Design Notes of `README.md`.
+16. **Rebase MAT onto its Root** → `rebase_final_mat` moves the tree's origin from `curated_reference.fasta` onto the tree's own root, so the root carries no mutations and its sequence ships as `final_tree_root.fasta`. Reconstructing a sample from `final_tree.pb.gz` therefore starts from that file, not from the curated reference. This is pure bookkeeping: only the root's own mutation list (emptied) and each mutation's `ref_nuc` annotation (repointed) change. It is the same operation `matUtils extract -y` performed, minus its two defects — see "Rerooting" in the Design Notes of `README.md`.
 17. **Create Root Sequence** → Infers root sequence from tree or uses reference
 18. **Augment Metadata** → Adds host_group, geographic_group, and temporal_group columns
 19. **Extract Subtrees** → Creates subtrees for each configured geographic region (matUtils extract)
@@ -207,7 +220,7 @@ The pipeline expects GISAID data in each input directory:
 
 ### Important Notes
 
-- Tests live in nine `scripts/test_*.py` modules (221 unittest tests: curate 91, check_tree_sequences 31, rebase_mat_root 30, utils 21, parse_gisaid 15, extract_root_sequence 13, create_samples 9, reroot_newick 8, config_params_sync 3). Run them with `python -m unittest discover` from within `scripts/`. Under `envs/python.yaml` that reports `OK (skipped=8)`: `test_reroot_newick.py` is `skipIf`-guarded because ete3 lives in its own env, so run it separately under `envs/ete3.yaml` to actually exercise those 8 — `OK (skipped=N)` otherwise reads like a pass. No linting setup currently exists, and 9 of the 17 script modules are untested.
+- Tests live in ten `scripts/test_*.py` modules (257 unittest tests: curate 91, create_scaffold_alignment 36, check_tree_sequences 31, rebase_mat_root 30, utils 21, parse_gisaid 15, extract_root_sequence 13, create_samples 9, reroot_newick 8, config_params_sync 3). Run them with `python -m unittest discover` from within `scripts/`. Under `envs/python.yaml` that reports `OK (skipped=8)`: `test_reroot_newick.py` is `skipIf`-guarded because ete3 lives in its own env, so run it separately under `envs/ete3.yaml` to actually exercise those 8 — `OK (skipped=N)` otherwise reads like a pass. No linting setup currently exists, and 9 of the 18 script modules are untested (augment_metadata, convert_DAG_protobuf_to_newick_samples, create_root_samples_file, download_ref_seq, prepare_host_annotation, prepare_subtype_annotation, randomize_alignment, simplified_host_classifier, trim_dag).
 - The pipeline uses compressed outputs (.xz, .gz) to save disk space
 - All logs are saved in the `logs/` directory organized by segment/subtype
 - The pipeline can process multiple influenza subtypes simultaneously
