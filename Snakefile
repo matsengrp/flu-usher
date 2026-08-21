@@ -318,6 +318,7 @@ rule create_scaffold_alignment:
         samples="results/{segment}/{subtype}/randomized_{n}/scaffold_samples.txt"
     params:
         n_taxa=config["scaffold_n_taxa"],
+        max_year_fraction=config["scaffold_max_year_fraction"],
         seed=lambda wildcards: int(wildcards.n)
     log:
         "logs/{segment}/{subtype}/randomized_{n}/create_scaffold_alignment.log"
@@ -329,6 +330,7 @@ rule create_scaffold_alignment:
             --output-alignment {output.msa} \
             --output-samples {output.samples} \
             --n-taxa {params.n_taxa} \
+            --max-year-fraction {params.max_year_fraction} \
             --seed {params.seed} \
             &> {log}
         """

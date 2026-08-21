@@ -314,21 +314,53 @@ axis they belong; they are placed later, in the pass that adds every
 non-scaffold sequence, so nothing is dropped.
 
 Each draw uses that randomization's seed, so the backbones differ: on HA/H3 any
-two share ~37% of their ids, which is what lets the merged DAG keep
+two share ~19% of their ids, which is what lets the merged DAG keep
 exploring topology space. Note the draw depends on the seed alone and *not* on
 the alignment's order — the sort in `select_scaffold_ids` is deliberate — so the
 shuffle decides only the order the chosen records are written in. On small
-combinations the backbones are necessarily much more alike: NA/N9 draws 1000 of
-just 2049 dated sequences, and any two of its scaffolds share ~78%.
+combinations the backbones are necessarily more alike: NA/N9 draws 1000 of just
+2048 dated sequences, and any two of its scaffolds share ~49%.
 
-Those two shares used to read 26% and 72%, against 93,968 and 1869 dated
-sequences. Repairing the collection dates (see "Collection dates" below) raised
-them, which is worth understanding because it cuts against the draw's purpose:
-quotas are per year, so recovering four more years on HA/H3 shrinks the largest
-per-year quota, and the small years it adds are drawn close to exhaustively --
-every seed picks nearly the same sequences out of a year holding barely more
-than its quota. More even coverage of the time axis therefore buys less
-diversity between randomizations. Both effects are wanted, and neither is free.
+A per-year quota on its own is not enough to keep them apart, which is what
+`scaffold_max_year_fraction` is for. A year holding 21 sequences against a
+quota of 17 hands over almost the same 17 under every seed: it spends its slots
+and buys no diversity. The parameter caps what any one year may give at that
+fraction of what it holds, floored at one sequence so no year is dropped for
+being small — `int()` alone would delete HA/H7's 1902 and NA/N9's 1968, single
+sequences that are exactly what the scaffold exists to anchor. Mean pairwise
+overlap between two backbones, at 0.5 versus unbounded, measured over the 10
+randomizations: HA/H3 19% vs 38%, NA/N8 30% vs 49%, HA/H7 41% vs 58%, NA/N9 49%
+vs 78%, with the distinct-sequence union rising in every case (HA/H3 5366 →
+6209 over ten draws).
+
+What the bound is really reclaiming is wasted slots, and this is the clearest
+way to see why it is not a trade against historical coverage. Unbounded, on
+HA/H3, 255 of each backbone's 1000 draws come from years holding no more
+sequences than their quota — every one of them 1990 or earlier. Those years have
+nothing to vary, so all ten backbones contain the *identical* early set, and
+nine of the ten copies tell the merged DAG nothing the first had not already
+given it. A quarter of every backbone is spent re-deriving the same sequences
+ten times. (This is also why unbounded whole-backbone overlap reads so high:
+across the years that are genuinely sampled it is 17%.)
+
+Bounding it does not cost that coverage, because what reaches the merged DAG is
+the union of the ten draws, not any one of them. Each backbone takes about half
+of a small year, but a different half, and a sequence in a year drawn at 0.5 is
+missed by all ten draws only with probability of order 2⁻¹⁰. So the collection
+still sees essentially every early sequence while the freed slots go to varied
+recent ones, and the union rises rather than falls: NA/N9 from 1885 to 2046 of
+its 2048 candidates, HA/H3 from 5366 to 6209. What genuinely changes is
+per-backbone early-taxon density — each individual backbone resolves its trunk
+from fewer early taxa — and the floor of one keeps every year present in every
+backbone regardless.
+
+The constraint to respect when changing it is capacity, not coverage: at 0.5 a
+combination can field about half its dated sequences, so NA/N9 offers 1016
+against the 1000 requested — a margin of 16, the tightest of the 16
+combinations, where every other has at least 1599. Below about 0.5 the small
+combinations cannot fill the draw at all (at 0.25 NA/N9 manages 509 and HA/H7
+800), which `select_scaffold_ids` raises on rather than shipping a short
+scaffold and letting `scaffold_n_taxa` become a fiction.
 
 `create_scaffold_alignment` reads `combined_metadata.csv` rather than the
 augmented file. It needs only `collection_date`, and depending on the augmented
@@ -356,8 +388,8 @@ duplicated: HA/H3's `preopt_tree` holds exactly 86,232 samples and
 
 ### Collection dates
 
-GISAID supplies a `Collection_Date` for every isolate, at one of three
-precisions: 582,016 as `YYYY-MM-DD`, 15,488 as `YYYY-MM` and 31,602 as `YYYY`,
+GISAID supplies a `Collection_Date` for every isolate in the corpus as it
+stands today, at one of three precisions: 582,016 as `YYYY-MM-DD`, 15,488 as `YYYY-MM` and 31,602 as `YYYY`,
 over the 629,106 isolates in the 21 configured input dirs. `parse_gisaid_data`
 writes the string through to `combined_metadata.csv` exactly as given, and
 consumers that need a full date parse it themselves.
@@ -389,7 +421,7 @@ The two in-pipeline consumers already read the column as text.
 `create_scaffold_alignment` takes `date[:4]`, so partials are usable year
 buckets and the fix strictly enlarges its candidate pool — every scaffold
 candidate in all 16 combinations is now dated, and the tightest combination,
-NA/N9, goes from 1869 dated of 2049 to all 2049, so the `scaffold_n_taxa`
+NA/N9, goes from 1869 dated of 2048 to all 2048, so the `scaffold_n_taxa`
 headroom described in `config.yaml` strictly increases and no combination moves
 toward usher-sampled's "No samples to place". `augment_metadata` parses strict
 `%Y-%m-%d` and sends anything else to `temporal_group="unknown"`, which is where

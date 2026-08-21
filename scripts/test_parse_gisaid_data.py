@@ -73,8 +73,10 @@ def run_parse(tmpdir, records, isolate_ids, ha_subtypes, na_subtypes,
 
     `metadata_frames` supplies one DataFrame per metadata file, consumed in
     sorted filename order -- the script sorts its glob, so frame i is always
-    read from meta_i.xls. Use it to test that each file is parsed on its own.
-    Otherwise a single file is built from `isolate_ids` and `dates`.
+    read from meta_{i:02d}.xls. The zero-padding is what keeps that true past
+    ten files, where "meta_10" would otherwise sort before "meta_2". Use it to
+    test that each file is parsed on its own. Otherwise a single file is built
+    from `isolate_ids` and `dates`.
     """
     data_dir = os.path.join(tmpdir, "data")
     os.makedirs(data_dir, exist_ok=True)
@@ -86,7 +88,7 @@ def run_parse(tmpdir, records, isolate_ids, ha_subtypes, na_subtypes,
         # exist for the script's glob to find them.
         n_files = 1 if metadata_frames is None else len(metadata_frames)
         for i in range(n_files):
-            open(os.path.join(data_dir, f"meta_{i}.xls"), "w").close()
+            open(os.path.join(data_dir, f"meta_{i:02d}.xls"), "w").close()
 
     out_dir = os.path.join(tmpdir, "results")
     os.makedirs(out_dir, exist_ok=True)
@@ -434,7 +436,13 @@ class TestCollectionDatePrecision(unittest.TestCase):
 
     def test_blank_collection_date_is_kept_blank_and_not_fatal(self):
         """GISAID supplies a date for every isolate today, but a blank is
-        missing data rather than a format change, so it must not fail the run."""
+        missing data rather than a format change, so it must not fail the run.
+
+        Unlike its neighbours this one passes against the pre-fix code too: the
+        old coerce-to-NaT path handled blanks correctly. It pins the invariant
+        down so the new validation cannot start rejecting them; it is not
+        evidence that issue #55 is fixed.
+        """
         ids = ["EPI_ISL_1", "EPI_ISL_2"]
         with tempfile.TemporaryDirectory() as tmpdir:
             code, out = run_parse(tmpdir, self.segments_for(ids), ids,
@@ -452,6 +460,67 @@ class TestCollectionDatePrecision(unittest.TestCase):
                                 ha_subtypes=["H1"], na_subtypes=["N1"],
                                 dates=["2010-03-01", "03/04/2020"])
             self.assertEqual(code, 1)
+
+    def test_a_date_that_no_calendar_contains_exits_nonzero(self):
+        """Right shape, impossible day.
+
+        A shape-only check would pass "2019-02-30" here and leave it to
+        augment_metadata, which parses strict %Y-%m-%d and silently returns
+        temporal_group="unknown" -- the failure would survive, just quieter and
+        one file further away.
+        """
+        for bad in ("2019-02-30", "2020-13-45", "2020-00"):
+            ids = ["EPI_ISL_1", "EPI_ISL_2"]
+            with self.subTest(value=bad), tempfile.TemporaryDirectory() as tmpdir:
+                code, _ = run_parse(tmpdir, self.segments_for(ids), ids,
+                                    ha_subtypes=["H1"], na_subtypes=["N1"],
+                                    dates=["2010-03-01", bad])
+                self.assertEqual(code, 1)
+
+    def test_a_leap_day_is_accepted_in_a_leap_year_only(self):
+        """Guards the guard: validation strict enough to reject real dates
+        would fail the pipeline on ~1/1460 of the corpus."""
+        self.assertTrue(parse_gisaid_data.is_gisaid_date("2020-02-29"))
+        self.assertFalse(parse_gisaid_data.is_gisaid_date("2019-02-29"))
+
+    def test_the_error_names_the_file_the_bad_date_came_from(self):
+        """With 56 input files, an error that does not say which one is nearly
+        as hard to act on as no error. Two files, bad date only in the second."""
+        good = fake_metadata(["EPI_ISL_1", "EPI_ISL_2"],
+                             dates=["2020-01-01", "2021-01-01"])
+        bad = fake_metadata(["EPI_ISL_3", "EPI_ISL_4"],
+                            dates=["2020-01-01", "03/04/2020"])
+        ids = ["EPI_ISL_1", "EPI_ISL_2", "EPI_ISL_3", "EPI_ISL_4"]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with self.assertLogs("parse_gisaid_data", level="ERROR") as logged:
+                code, _ = run_parse(tmpdir, self.segments_for(ids), ids,
+                                    ha_subtypes=["H1"], na_subtypes=["N1"],
+                                    metadata_frames=[good, bad])
+            self.assertEqual(code, 1)
+            reported = "\n".join(logged.output)
+            self.assertIn("meta_01.xls", reported)
+            self.assertNotIn("meta_00.xls", reported)
+            self.assertIn("EPI_ISL_4", reported)
+
+    def test_whitespace_only_date_counts_as_blank_not_malformed(self):
+        """Stripping happens before the blank test, so "  " is missing data."""
+        ids = ["EPI_ISL_1", "EPI_ISL_2"]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            code, out = run_parse(tmpdir, self.segments_for(ids), ids,
+                                  ha_subtypes=["H1"], na_subtypes=["N1"],
+                                  dates=["2010-03-01", "   "])
+            self.assertEqual(code, 0)
+            self.assertEqual(read_collection_dates(out)["EPI_ISL_2"], "")
+
+    def test_an_entirely_blank_column_is_not_a_malformed_column(self):
+        """The all-blank case must not trip the fatal check on emptiness."""
+        ids = ["EPI_ISL_1", "EPI_ISL_2"]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            code, out = run_parse(tmpdir, self.segments_for(ids), ids,
+                                  ha_subtypes=["H1"], na_subtypes=["N1"],
+                                  dates=["", ""])
+            self.assertEqual(code, 0)
+            self.assertEqual(set(read_collection_dates(out).values()), {""})
 
 
 if __name__ == "__main__":

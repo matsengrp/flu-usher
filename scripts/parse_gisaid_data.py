@@ -12,7 +12,35 @@ from Bio import SeqIO
 from Bio.SeqRecord import SeqRecord
 from collections import defaultdict
 import re
+from datetime import date
 from utils import open_sequence_file, setup_logging
+
+# GISAID ships collection dates at exactly three precisions.
+GISAID_DATE_PATTERN = re.compile(r'\d{4}(-\d{2}(-\d{2})?)?')
+
+
+def is_gisaid_date(value):
+    """True if `value` is a real date at one of GISAID's three precisions.
+
+    Shape alone is not enough: "2020-13-45" and "2019-02-30" match the pattern
+    and name no day that exists. Letting them through would not make them
+    harmless, only quiet -- augment_metadata parses strict %Y-%m-%d and returns
+    temporal_group="unknown" on failure, so an impossible date would be dropped
+    from the temporal split with no error, one file downstream of here. Missing
+    precision is normal; an impossible date is a transcription error.
+    """
+    if not GISAID_DATE_PATTERN.fullmatch(value):
+        return False
+    parts = value.split('-')
+    try:
+        # Absent fields default to the 1st, which is only ever used to ask
+        # whether the fields that *are* present name a real day.
+        date(int(parts[0]),
+             int(parts[1]) if len(parts) > 1 else 1,
+             int(parts[2]) if len(parts) > 2 else 1)
+    except ValueError:
+        return False
+    return True
 
 logger = setup_logging(__name__)
 
@@ -192,12 +220,15 @@ def main():
             # in the Design Notes of README.md for why, and issue #55.
             raw = df['collection_date'].astype('string').str.strip()
             blank = raw.isna() | (raw == '')
-            malformed = ~blank & ~raw.str.fullmatch(r'\d{4}(-\d{2}(-\d{2})?)?')
+            # fillna('') so the check is plain bool rather than nullable: a
+            # blank is judged by `blank`, not here.
+            malformed = ~blank & ~raw.fillna('').map(is_gisaid_date)
             if malformed.any():
                 examples = ', '.join(df.loc[malformed, 'isolate_id'].astype(str).head(5))
                 malformed_dates.append(
                     f"{metadata_file}: {int(malformed.sum())} collection_date "
-                    f"values match none of YYYY-MM-DD, YYYY-MM, YYYY "
+                    f"values are not a real date at one of YYYY-MM-DD, "
+                    f"YYYY-MM, YYYY "
                     f"(e.g. {examples})"
                 )
             if blank.any():
