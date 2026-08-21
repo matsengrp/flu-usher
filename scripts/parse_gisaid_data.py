@@ -82,6 +82,11 @@ def main():
     
     # Collect all metadata dataframes
     all_metadata_dfs = []
+
+    # Collection dates that are neither blank nor one of GISAID's three
+    # precisions. Reported per file with example isolates, and fatal, because the
+    # only way to get one is a change in what GISAID ships.
+    malformed_dates = []
     
     # Process each input directory
     for data_dir in args.input_dirs:
@@ -180,8 +185,27 @@ def main():
                 df[cols]
                 .rename(columns={col : col.lower() for col in cols})
             )
-            # Convert the 'collection_date' column to datetime
-            df['collection_date'] = pd.to_datetime(df['collection_date'], errors='coerce')
+            # Keep collection_date exactly as GISAID supplies it, at whichever
+            # of its three precisions that is (YYYY-MM-DD, YYYY-MM, YYYY). It
+            # used to go through a bare pd.to_datetime(errors='coerce'), which
+            # silently emptied 87,854 of 629,106 dates -- see "Collection dates"
+            # in the Design Notes of README.md for why, and issue #55.
+            raw = df['collection_date'].astype('string').str.strip()
+            blank = raw.isna() | (raw == '')
+            malformed = ~blank & ~raw.str.fullmatch(r'\d{4}(-\d{2}(-\d{2})?)?')
+            if malformed.any():
+                examples = ', '.join(df.loc[malformed, 'isolate_id'].astype(str).head(5))
+                malformed_dates.append(
+                    f"{metadata_file}: {int(malformed.sum())} collection_date "
+                    f"values match none of YYYY-MM-DD, YYYY-MM, YYYY "
+                    f"(e.g. {examples})"
+                )
+            if blank.any():
+                logger.info(
+                    f"{int(blank.sum())} of {len(df)} records in {metadata_file} "
+                    f"have no collection_date"
+                )
+            df['collection_date'] = raw
             all_metadata_dfs.append(df)
     
     # Concatenate all metadata dataframes
@@ -262,6 +286,7 @@ def main():
     # already catches.
     if reconciliation_error:
         errors.append(reconciliation_error)
+    errors.extend(malformed_dates)
     if errors:
         for err in errors:
             logger.error(err)
