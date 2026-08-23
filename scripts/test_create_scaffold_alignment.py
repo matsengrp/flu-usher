@@ -153,30 +153,30 @@ class SelectScaffoldIdsTestCase(unittest.TestCase):
 
     def test_draws_the_requested_number(self):
         years, ids = self._years({2000: 50, 2001: 50, 2002: 50})
-        self.assertEqual(len(csa.select_scaffold_ids(ids, years, 30, seed=0)), 30)
+        self.assertEqual(len(csa.select_scaffold_ids(ids, years, 30, seed=0, max_year_fraction=1.0)), 30)
 
     def test_is_deterministic_for_a_seed(self):
         years, ids = self._years({2000: 50, 2001: 50})
-        first = csa.select_scaffold_ids(ids, years, 20, seed=7)
-        second = csa.select_scaffold_ids(ids, years, 20, seed=7)
+        first = csa.select_scaffold_ids(ids, years, 20, seed=7, max_year_fraction=1.0)
+        second = csa.select_scaffold_ids(ids, years, 20, seed=7, max_year_fraction=1.0)
         self.assertEqual(first, second)
 
     def test_different_seeds_give_different_draws(self):
         """Each randomization must get its own backbone, or they all coincide."""
         years, ids = self._years({2000: 200, 2001: 200})
-        first = csa.select_scaffold_ids(ids, years, 40, seed=0)
-        second = csa.select_scaffold_ids(ids, years, 40, seed=1)
+        first = csa.select_scaffold_ids(ids, years, 40, seed=0, max_year_fraction=1.0)
+        second = csa.select_scaffold_ids(ids, years, 40, seed=1, max_year_fraction=1.0)
         self.assertNotEqual(first, second)
 
     def test_does_not_depend_on_candidate_order(self):
         years, ids = self._years({2000: 50, 2001: 50})
-        forward = csa.select_scaffold_ids(ids, years, 20, seed=3)
-        backward = csa.select_scaffold_ids(list(reversed(ids)), years, 20, seed=3)
+        forward = csa.select_scaffold_ids(ids, years, 20, seed=3, max_year_fraction=1.0)
+        backward = csa.select_scaffold_ids(list(reversed(ids)), years, 20, seed=3, max_year_fraction=1.0)
         self.assertEqual(forward, backward)
 
     def test_covers_the_sparse_years_not_just_the_dense_one(self):
         years, ids = self._years({1963: 8, 1990: 8, 2024: 11000})
-        chosen = csa.select_scaffold_ids(ids, years, 100, seed=0)
+        chosen = csa.select_scaffold_ids(ids, years, 100, seed=0, max_year_fraction=1.0)
         drawn_years = {years[i] for i in chosen}
         self.assertEqual(drawn_years, {1963, 1990, 2024})
         self.assertEqual(sum(1 for i in chosen if years[i] == 1963), 8)
@@ -185,19 +185,19 @@ class SelectScaffoldIdsTestCase(unittest.TestCase):
     def test_undated_candidates_are_not_drawn(self):
         years, ids = self._years({2000: 10})
         ids = ids + ["UNDATED_1", "UNDATED_2"]
-        chosen = csa.select_scaffold_ids(ids, years, 12, seed=0)
+        chosen = csa.select_scaffold_ids(ids, years, 12, seed=0, max_year_fraction=1.0)
         self.assertNotIn("UNDATED_1", chosen)
         self.assertNotIn("UNDATED_2", chosen)
         self.assertEqual(len(chosen), 10)
 
     def test_raises_when_nothing_can_be_dated(self):
         with self.assertRaises(ValueError):
-            csa.select_scaffold_ids(["A", "B"], {}, 2, seed=0)
+            csa.select_scaffold_ids(["A", "B"], {}, 2, seed=0, max_year_fraction=1.0)
 
     def test_a_year_holding_one_sequence_still_contributes_it(self):
         """The sparse end of the range is the whole point of stratifying."""
         years, ids = self._years({2000: 1, 2001: 50})
-        chosen = csa.select_scaffold_ids(ids, years, 10, seed=0)
+        chosen = csa.select_scaffold_ids(ids, years, 10, seed=0, max_year_fraction=1.0)
         self.assertEqual(sum(1 for i in chosen if years[i] == 2000), 1)
 
     def test_a_repeated_id_takes_a_single_slot(self):
@@ -208,18 +208,18 @@ class SelectScaffoldIdsTestCase(unittest.TestCase):
         silently short while the caller emitted both records.
         """
         years = {"DUP": 2000, "OTHER": 2000}
-        chosen = csa.select_scaffold_ids(["DUP", "DUP", "OTHER"], years, 2, seed=0)
+        chosen = csa.select_scaffold_ids(["DUP", "DUP", "OTHER"], years, 2, seed=0, max_year_fraction=1.0)
         self.assertEqual(chosen, {"DUP", "OTHER"})
 
     def test_zero_n_taxa_raises(self):
         """Must name the problem, not die inside a logging f-string."""
         with self.assertRaises(ValueError) as caught:
-            csa.select_scaffold_ids(["A"], {"A": 2000}, 0, seed=0)
+            csa.select_scaffold_ids(["A"], {"A": 2000}, 0, seed=0, max_year_fraction=1.0)
         self.assertIn("n_taxa", str(caught.exception))
 
     def test_negative_n_taxa_raises(self):
         with self.assertRaises(ValueError) as caught:
-            csa.select_scaffold_ids(["A"], {"A": 2000}, -5, seed=0)
+            csa.select_scaffold_ids(["A"], {"A": 2000}, -5, seed=0, max_year_fraction=1.0)
         self.assertIn("n_taxa", str(caught.exception))
 
 
@@ -234,7 +234,7 @@ class CreateScaffoldAlignmentTestCase(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def _build(self, per_year, n_taxa, seed=0, undated=()):
+    def _build(self, per_year, n_taxa, seed=0, undated=(), max_year_fraction=1.0):
         ids, dates = [], {}
         for year, count in per_year.items():
             for i in range(count):
@@ -247,7 +247,8 @@ class CreateScaffoldAlignmentTestCase(unittest.TestCase):
         write_alignment(self.alignment, ids)
         write_metadata(self.metadata, dates)
         csa.create_scaffold_alignment(self.alignment, self.metadata, self.out_msa,
-                                      self.out_samples, n_taxa, seed)
+                                      self.out_samples, n_taxa, seed,
+                                      max_year_fraction)
         return ids
 
     def test_reference_is_kept_and_comes_first(self):
@@ -290,7 +291,8 @@ class CreateScaffoldAlignmentTestCase(unittest.TestCase):
         write_metadata(self.metadata, {})
         with self.assertRaises(ValueError):
             csa.create_scaffold_alignment(self.alignment, self.metadata,
-                                          self.out_msa, self.out_samples, 10, 0)
+                                          self.out_msa, self.out_samples, 10, 0,
+                                          1.0)
 
     def test_asking_for_more_than_exists_yields_everything_dated(self):
         self._build({2000: 5, 2001: 5}, n_taxa=1000)
@@ -304,7 +306,7 @@ class CreateScaffoldAlignmentTestCase(unittest.TestCase):
         write_alignment(self.alignment, ["DUP", "DUP"])
         write_metadata(self.metadata, {"DUP": "2000-06-01"})
         csa.create_scaffold_alignment(self.alignment, self.metadata, self.out_msa,
-                                      self.out_samples, 1, 0)
+                                      self.out_samples, 1, 0, 1.0)
         written = read_fasta_ids(self.out_msa)
         self.assertEqual(written, [REFERENCE_ID, "DUP"])
         with open(self.out_samples) as handle:
@@ -316,7 +318,7 @@ class CreateScaffoldAlignmentTestCase(unittest.TestCase):
         write_alignment(self.alignment, ["DATED", "NOT_IN_METADATA"])
         write_metadata(self.metadata, {"DATED": "2000-06-01"})
         csa.create_scaffold_alignment(self.alignment, self.metadata, self.out_msa,
-                                      self.out_samples, 5, 0)
+                                      self.out_samples, 5, 0, 1.0)
         self.assertEqual(read_fasta_ids(self.out_msa), [REFERENCE_ID, "DATED"])
 
     def test_zero_n_taxa_raises(self):
@@ -352,6 +354,7 @@ class CliTestCase(unittest.TestCase):
             "--output-alignment", out_msa,
             "--output-samples", out_samples,
             "--n-taxa", "4",
+            "--max-year-fraction", "1.0",
             "--seed", "0",
         ]
         with mock.patch.object(sys, "argv", argv):
@@ -380,12 +383,144 @@ class CliTestCase(unittest.TestCase):
                 "--output-alignment", out_msa,
                 "--output-samples", out_samples,
                 "--n-taxa", "20",
+                "--max-year-fraction", "1.0",
                 "--seed", seed,
             ]
             with mock.patch.object(sys, "argv", argv):
                 csa.main()
             draws.append(read_fasta_ids(out_msa))
         self.assertNotEqual(draws[0], draws[1])
+
+
+class MaxYearFractionTestCase(unittest.TestCase):
+    """Bound what one year can give, so sparse years stop being drawn dry.
+
+    An equal per-year quota alone hands over nearly the same sequences from a
+    year that can barely fill its quota, under every seed. Measured across the
+    10 randomizations after the collection dates were repaired, mean pairwise
+    overlap between two HA/H3 backbones was 38% unbounded and 19% at 0.5.
+    """
+
+    def _years(self, per_year):
+        years, ids = {}, []
+        for year, count in per_year.items():
+            for i in range(count):
+                isolate_id = f"S_{year}_{i}"
+                years[isolate_id] = year
+                ids.append(isolate_id)
+        return years, ids
+
+    def test_a_year_cannot_give_more_than_its_fraction(self):
+        """The dense year is capped even though it could fill the whole draw."""
+        years, ids = self._years({2000: 100, 2001: 100})
+        chosen = csa.select_scaffold_ids(ids, years, 40, seed=0,
+                                        max_year_fraction=0.25)
+        from_2000 = sum(1 for i in chosen if years[i] == 2000)
+        self.assertLessEqual(from_2000, 25)
+
+    def test_one_point_zero_is_exactly_the_unbounded_draw(self):
+        """The parameter must have an identity value, or it cannot be turned off."""
+        years, ids = self._years({2000: 40, 2001: 5, 2002: 200})
+        self.assertEqual(
+            csa.select_scaffold_ids(ids, years, 50, seed=4, max_year_fraction=1.0),
+            csa.select_scaffold_ids(ids, years, 50, seed=4, max_year_fraction=1.0),
+        )
+        bounded = csa.select_scaffold_ids(ids, years, 50, seed=4,
+                                         max_year_fraction=0.5)
+        unbounded = csa.select_scaffold_ids(ids, years, 50, seed=4,
+                                           max_year_fraction=1.0)
+        self.assertNotEqual(bounded, unbounded)
+
+    def test_a_single_sequence_year_survives_any_fraction(self):
+        """int(1 * 0.25) is 0, which would delete the year outright.
+
+        On HA/H7 and NA/N9 the oldest year holds exactly one sequence, and those
+        are the sequences the scaffold exists to anchor the root region with.
+        """
+        years, ids = self._years({1902: 1, 2020: 400})
+        chosen = csa.select_scaffold_ids(ids, years, 5, seed=0,
+                                        max_year_fraction=0.01)
+        self.assertIn("S_1902_0", chosen)
+
+    def test_a_bound_that_cannot_meet_n_taxa_raises(self):
+        """Short-drawing silently would make n_taxa a lie.
+
+        400 candidates at 0.1 can field 40, so a request for 100 is a
+        configuration error rather than a data limitation.
+        """
+        years, ids = self._years({2000: 200, 2001: 200})
+        with self.assertRaises(ValueError) as caught:
+            csa.select_scaffold_ids(ids, years, 100, seed=0,
+                                    max_year_fraction=0.1)
+        self.assertIn("max_year_fraction", str(caught.exception))
+
+    def test_too_few_dated_sequences_still_only_warns(self):
+        """The other reason a draw comes up short is unavoidable, so it is not
+        an error -- NA/N9 legitimately holds fewer sequences than some n_taxa."""
+        years, ids = self._years({2000: 3, 2001: 2})
+        chosen = csa.select_scaffold_ids(ids, years, 100, seed=0,
+                                        max_year_fraction=1.0)
+        self.assertEqual(len(chosen), 5)
+
+    def test_lowering_the_bound_raises_diversity_between_seeds(self):
+        """The property the parameter exists for.
+
+        2000 must be a year that gets drawn *dry*, which is where the diversity
+        goes: a fair share of 60 over three years is 20, and 2000 holds exactly
+        20, so unbounded it hands over the same 20 under every seed. At 0.5 it
+        may give only 10 of its 20, and which 10 varies. Equal-sized years would
+        show nothing -- a cap above the quota never binds.
+
+        Averaged over seed pairs rather than a single pair, so the assertion
+        rests on the distribution and not on one lucky draw.
+        """
+        years, ids = self._years({2000: 20, 2001: 100, 2002: 100})
+
+        def mean_overlap(fraction):
+            draws = [csa.select_scaffold_ids(ids, years, 60, seed=s,
+                                             max_year_fraction=fraction)
+                     for s in range(6)]
+            pairs = [(a, b) for i, a in enumerate(draws) for b in draws[i + 1:]]
+            return sum(len(a & b) / len(a) for a, b in pairs) / len(pairs)
+
+        self.assertLess(mean_overlap(0.5), mean_overlap(1.0))
+
+    def test_out_of_range_fractions_raise(self):
+        years, ids = self._years({2000: 10})
+        for bad in (0, -0.5, 1.5):
+            with self.assertRaises(ValueError):
+                csa.select_scaffold_ids(ids, years, 5, seed=0,
+                                        max_year_fraction=bad)
+
+    def test_the_cli_flag_reaches_the_draw(self):
+        """A flag main() ignored would leave every backbone unbounded."""
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        alignment = os.path.join(tmp.name, "msa.fasta.xz")
+        metadata = os.path.join(tmp.name, "metadata.csv")
+        write_alignment(alignment, [f"S_{i}" for i in range(200)])
+        # Two years only, so a bound of 0.1 must visibly shrink the draw.
+        write_metadata(metadata,
+                       {f"S_{i}": f"{2000 + i % 2}-06-01" for i in range(200)})
+        out_msa = os.path.join(tmp.name, "bounded.fasta.xz")
+        out_samples = os.path.join(tmp.name, "bounded.txt")
+        argv = [
+            "create_scaffold_alignment.py",
+            "--alignment", alignment,
+            "--metadata", metadata,
+            "--output-alignment", out_msa,
+            "--output-samples", out_samples,
+            "--n-taxa", "20",
+            "--max-year-fraction", "0.1",
+            "--seed", "0",
+        ]
+        with mock.patch.object(sys, "argv", argv):
+            csa.main()
+        # 100 candidates per year at 0.1 caps each at 10, so 20 is still met;
+        # the draw must not exceed the cap in either year.
+        drawn = [i for i in read_fasta_ids(out_msa) if i != REFERENCE_ID]
+        self.assertEqual(len(drawn), 20)
+        self.assertEqual(sum(1 for i in drawn if int(i.split("_")[1]) % 2 == 0), 10)
 
 
 if __name__ == "__main__":

@@ -98,13 +98,54 @@ n_randomizations: 10
 #
 # Keep this well below the number of *dated* sequences in the smallest
 # combination, which is the real ceiling -- undated sequences are never scaffold
-# candidates, so a combination's total count overstates the headroom. NA/N9 is
-# the tightest at 1827 dated of 2007 total, leaving 827 to spare at 1000; the
-# next tightest are HA/H7 (2586 dated) and NA/N8 (2669 dated of 4415, i.e. 40%
-# undated). If the scaffold were to swallow every dated sequence, usher-sampled
-# would be left with nothing to place and would exit 1 with "No samples to
-# place".
+# candidates, so a combination's total count overstates the headroom. Since
+# issue #55 every isolate GISAID ships is dated, so the two counts now coincide:
+# NA/N9 is the tightest at 2048 dated of 2048 candidates, leaving 1048 to spare
+# at 1000, and the next tightest are HA/H7 (3224) and NA/N6 (3990). Before that
+# fix NA/N9 had only 1869 dated and NA/N8 2818 of 4565, so this headroom can
+# shrink again if dates stop parsing. If the scaffold were to swallow every dated
+# sequence, usher-sampled would be left with nothing to place and would exit 1
+# with "No samples to place".
+#
+# Counts exclude the reference, which create_scaffold_alignment always keeps and
+# never counts against the quota. That is easy to get wrong on NA/N9, whose
+# reference is an EPI_ISL id (EPI_ISL_155653) rather than an accession like every
+# other combination's, so it does not stand out among the sample ids.
+#
+# In practice scaffold_max_year_fraction binds first: see below.
 scaffold_n_taxa: 1000
+
+# Most of any single collection year's sequences that one scaffold draw may take,
+# as a fraction, floored at one sequence so no year is dropped for being small.
+# 1.0 means no bound.
+#
+# Without a bound, an equal per-year quota drains the sparse years: a year with
+# 21 candidates against a quota of 17 returns nearly the same 17 under every
+# seed, so it costs slots and contributes no diversity between randomizations.
+# That is what the merged DAG explores topology space with. Measured over the 10
+# randomizations, mean pairwise overlap between two backbones at 0.5 versus no
+# bound: HA/H3 19% vs 38%, NA/N8 30% vs 49%, HA/H7 41% vs 58%, NA/N9 49% vs 78%,
+# with the distinct-sequence union rising in every case (HA/H3 5366 -> 6209).
+#
+# This does not cost early coverage, which is the objection to expect. What
+# reaches the merged DAG is the union of the 10 draws, not any single backbone.
+# Unbounded, 255 of HA/H3's 1000 draws come from years holding no more than their
+# quota -- all of them 1990 or earlier -- so those years have nothing to vary and
+# all ten backbones carry the identical early set: a quarter of every backbone
+# re-derives the same sequences ten times. Bounded, each backbone takes about
+# half of such a year but a different half, and a sequence there is missed by all
+# ten draws only with probability of order 2^-10, so the union rises instead of
+# falling (NA/N9 1885 -> 2046 of 2048; HA/H3 5366 -> 6209). What changes is
+# per-backbone early-taxon density, and the floor of one keeps every year present
+# in every backbone.
+#
+# The constraint to respect is capacity, not coverage: at 0.5 a combination can
+# field about half its dated sequences, so NA/N9 offers 1016 against the 1000
+# requested. Every other combination has at least 1599. Raising scaffold_n_taxa
+# or lowering this fraction will hit NA/N9 first, and below ~0.5 the small
+# combinations cannot fill the draw at all -- at 0.25 NA/N9 manages 509 and HA/H7
+# 800, which select_scaffold_ids raises on rather than short-drawing.
+scaffold_max_year_fraction: 0.5
 
 # Seed for sampling a single history out of the trimmed DAG (rule create_newick).
 # historydag's fast_sample() draws from Python's global `random`, so without this

@@ -314,12 +314,53 @@ axis they belong; they are placed later, in the pass that adds every
 non-scaffold sequence, so nothing is dropped.
 
 Each draw uses that randomization's seed, so the backbones differ: on HA/H3 any
-two share only ~26% of their ids, which is what lets the merged DAG keep
+two share ~19% of their ids, which is what lets the merged DAG keep
 exploring topology space. Note the draw depends on the seed alone and *not* on
 the alignment's order — the sort in `select_scaffold_ids` is deliberate — so the
 shuffle decides only the order the chosen records are written in. On small
-combinations the backbones are necessarily much more alike: NA/N9 draws 1000 of
-just 1827 dated sequences, and any two of its scaffolds share ~72%.
+combinations the backbones are necessarily more alike: NA/N9 draws 1000 of just
+2048 dated sequences, and any two of its scaffolds share ~49%.
+
+A per-year quota on its own is not enough to keep them apart, which is what
+`scaffold_max_year_fraction` is for. A year holding 21 sequences against a
+quota of 17 hands over almost the same 17 under every seed: it spends its slots
+and buys no diversity. The parameter caps what any one year may give at that
+fraction of what it holds, floored at one sequence so no year is dropped for
+being small — `int()` alone would delete HA/H7's 1902 and NA/N9's 1968, single
+sequences that are exactly what the scaffold exists to anchor. Mean pairwise
+overlap between two backbones, at 0.5 versus unbounded, measured over the 10
+randomizations: HA/H3 19% vs 38%, NA/N8 30% vs 49%, HA/H7 41% vs 58%, NA/N9 49%
+vs 78%, with the distinct-sequence union rising in every case (HA/H3 5366 →
+6209 over ten draws).
+
+What the bound is really reclaiming is wasted slots, and this is the clearest
+way to see why it is not a trade against historical coverage. Unbounded, on
+HA/H3, 255 of each backbone's 1000 draws come from years holding no more
+sequences than their quota — every one of them 1990 or earlier. Those years have
+nothing to vary, so all ten backbones contain the *identical* early set, and
+nine of the ten copies tell the merged DAG nothing the first had not already
+given it. A quarter of every backbone is spent re-deriving the same sequences
+ten times. (This is also why unbounded whole-backbone overlap reads so high:
+across the years that are genuinely sampled it is 17%.)
+
+Bounding it does not cost that coverage, because what reaches the merged DAG is
+the union of the ten draws, not any one of them. Each backbone takes about half
+of a small year, but a different half, and a sequence in a year drawn at 0.5 is
+missed by all ten draws only with probability of order 2⁻¹⁰. So the collection
+still sees essentially every early sequence while the freed slots go to varied
+recent ones, and the union rises rather than falls: NA/N9 from 1885 to 2046 of
+its 2048 candidates, HA/H3 from 5366 to 6209. What genuinely changes is
+per-backbone early-taxon density — each individual backbone resolves its trunk
+from fewer early taxa — and the floor of one keeps every year present in every
+backbone regardless.
+
+The constraint to respect when changing it is capacity, not coverage: at 0.5 a
+combination can field about half its dated sequences, so NA/N9 offers 1016
+against the 1000 requested — a margin of 16, the tightest of the 16
+combinations, where every other has at least 1599. Below about 0.5 the small
+combinations cannot fill the draw at all (at 0.25 NA/N9 manages 509 and HA/H7
+800), which `select_scaffold_ids` raises on rather than shipping a short
+scaffold and letting `scaffold_n_taxa` become a fiction.
 
 `create_scaffold_alignment` reads `combined_metadata.csv` rather than the
 augmented file. It needs only `collection_date`, and depending on the augmented
@@ -344,6 +385,61 @@ through costs nothing either way, since usher re-derives the backbone's states
 from the full VCF. Samples already in the scaffold are skipped rather than
 duplicated: HA/H3's `preopt_tree` holds exactly 86,232 samples and
 `placement_stats.tsv` has 85,231 rows, i.e. 86,232 - 1,001.
+
+### Collection dates
+
+GISAID supplies a `Collection_Date` for every isolate in the corpus as it
+stands today, at one of three precisions: 582,016 as `YYYY-MM-DD`, 15,488 as `YYYY-MM` and 31,602 as `YYYY`,
+over the 629,106 isolates in the 21 configured input dirs. `parse_gisaid_data`
+writes the string through to `combined_metadata.csv` exactly as given, and
+consumers that need a full date parse it themselves.
+
+It did not always. The column used to go through
+`pd.to_datetime(df['collection_date'], errors='coerce')`, and pandas >= 2.0
+infers a *single* format from the column's first non-null element, then coerces
+everything not matching it to `NaT`. The call sat inside the per-file loop, so
+one row decided the fate of that file's whole date column. Five of the 56
+`data/*/*.xls` files open on a partial date, and in exactly those five every
+fully-resolved date was destroyed: `H3N2-window-8.xls` (`2022-11`) 19,811,
+`H1N1-window-1.xls` (`2009`) 17,908, `H3NX` (`2001`) 4,653, `H8NX` (`2006`) 237
+and `H15NX` (`1983`) 10 — 42,619 valid dates, silently, because `errors='coerce'`
+has nothing to complain about. `combined_metadata.csv` came out with 87,854 of
+629,106 dates blank: those 42,619 plus the 45,235 genuine partials the same call
+discarded. Issue #55.
+
+The narrow fix is `format='mixed'`, which recovers all 42,619. It is the wrong
+one: it also maps `2009` to January 1 and `2022-11` to the 1st, inventing a day
+for 47,090 rows. The bug already did this to the 1,855 partials that happened to
+match their file's inferred format — `EPI_ISL_65694` is `2009` in the `.xls` and
+`2009-01-01` in today's CSV — and normalising the rest would grow the fabrication
+by 25x while destroying the one thing a consumer needs in order to drop partial
+dates: the ability to tell them apart. Hence the raw string. There is no
+precision column either, because precision is the string's length and no
+consumer needs it named.
+
+The two in-pipeline consumers already read the column as text.
+`create_scaffold_alignment` takes `date[:4]`, so partials are usable year
+buckets and the fix strictly enlarges its candidate pool — every scaffold
+candidate in all 16 combinations is now dated, and the tightest combination,
+NA/N9, goes from 1869 dated of 2048 to all 2048, so the `scaffold_n_taxa`
+headroom described in `config.yaml` strictly increases and no combination moves
+toward usher-sampled's "No samples to place". `augment_metadata` parses strict
+`%Y-%m-%d` and sends anything else to `temporal_group="unknown"`, which is where
+the blanks already went; the recovered full dates move into `early`/`late` and
+shift the global median, and the 47,090 partials stay `unknown` by design.
+
+What the raw string buys is that a consumer needing exact dates can reject
+partials instead of being handed invented ones. What it costs is that such a
+consumer must now do so deliberately: a bare `pd.to_datetime(..., errors='coerce')`
+downstream of this file will infer `%Y` from a leading year and quietly `NaT`
+every full date — the same trap, one repo over. Parse with `format='ISO8601'`,
+never `'mixed'`: on `['03/04/2020', '2020-05-06']`, `ISO8601` returns `NaT` for
+the ambiguous value while `'mixed'` silently guesses March 4.
+
+`parse_gisaid_data` now fails the run on any date matching none of the three
+precisions, listing the file and up to five offending isolate ids. Blanks are
+logged but tolerated, since a blank is missing data rather than a change in what
+GISAID ships. All 56 files pass today.
 
 ### Rerooting: newick space, not `matUtils extract -y`
 

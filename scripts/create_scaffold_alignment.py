@@ -19,6 +19,13 @@ Sequences with no collection date are not candidates: they carry no information
 about where along the time axis they belong. They are placed later, in the pass
 that adds every non-scaffold sequence to the backbone, so nothing is dropped.
 
+An equal quota per year, on its own, drains the sparse years: a year holding 21
+sequences against a quota of 17 hands over almost the same 17 under every seed,
+so it contributes no diversity between randomisations while still consuming its
+slots. `max_year_fraction` caps what any one year may give at that fraction of
+what it holds -- but never below one sequence, so no year is dropped for being
+small. See "How the scaffold is sampled" in README.md for the measurements.
+
 The first record is taken to be the curated reference and is always kept, at the
 top: faToVcf reads the reference off the alignment's first record. Everything
 after it is emitted in the order it appeared, so the scaffold reads back in the
@@ -28,7 +35,7 @@ What makes each randomisation's backbone different is the seed, not that order.
 The draw is deliberately independent of input order -- each year's candidates are
 sorted before sampling -- so drawing from a differently shuffled alignment under
 the same seed returns exactly the same set. On HA/H3 any two randomisations share
-only ~26% of their scaffold ids, which is where the diversity comes from. (An
+~19% of their scaffold ids, which is where the diversity comes from. (An
 earlier version of this docstring said usher-sampled "places sequences greedily
 in alignment order", which overstates it: -A is --sort-before-placement-3, so it
 sorts by ambiguous-base count and alignment order is only a tie-break.)
@@ -110,16 +117,25 @@ def allocate_quotas(available, total):
     return quotas
 
 
-def select_scaffold_ids(candidate_ids, years, n_taxa, seed):
+def select_scaffold_ids(candidate_ids, years, n_taxa, seed, max_year_fraction):
     """
     Choose `n_taxa` of `candidate_ids` spread evenly over collection year.
 
     `years` maps a subset of the candidates to their collection year; candidates
     absent from it are not eligible. Returns an unordered set of chosen ids --
     the caller decides the output order.
+
+    `max_year_fraction` bounds what any single year may contribute, as a
+    fraction of the candidates it holds, floored at one so that a year with a
+    single sequence still contributes it. 1.0 imposes no bound, which is the
+    behaviour this function had before the parameter existed.
     """
     if n_taxa < 1:
         raise ValueError(f"n_taxa must be at least 1, got {n_taxa}")
+    if not 0 < max_year_fraction <= 1:
+        raise ValueError(
+            f"max_year_fraction must be in (0, 1], got {max_year_fraction}"
+        )
 
     rng = random.Random(seed)
 
@@ -145,7 +161,13 @@ def select_scaffold_ids(candidate_ids, years, n_taxa, seed):
     for year in by_year:
         by_year[year].sort()
 
-    quotas = allocate_quotas({y: len(v) for y, v in by_year.items()}, n_taxa)
+    # Floored at one: int() alone would zero out every year holding fewer than
+    # 1/max_year_fraction sequences, and those are the oldest years -- exactly
+    # the ones the scaffold exists to anchor. On HA/H7 and NA/N9 the oldest year
+    # holds a single sequence, so int() would have deleted it outright.
+    capacity = {y: max(1, int(len(v) * max_year_fraction))
+                for y, v in by_year.items()}
+    quotas = allocate_quotas(capacity, n_taxa)
 
     chosen = set()
     for year in sorted(by_year):
@@ -156,9 +178,21 @@ def select_scaffold_ids(candidate_ids, years, n_taxa, seed):
     logger.info(
         f"{len(candidate_ids)} candidates, {len(by_year)} dated years "
         f"({min(by_year)}-{max(by_year)}); drew {len(chosen)} over {len(filled)} "
-        f"years, {min(filled)}-{max(filled)} per year"
+        f"years, {min(filled)}-{max(filled)} per year, "
+        f"max_year_fraction={max_year_fraction}"
     )
     if len(chosen) < n_taxa:
+        n_dated = sum(len(v) for v in by_year.values())
+        if n_dated >= n_taxa:
+            # The data could have filled the request and the ceiling stopped it.
+            # Silently shipping a short scaffold would make n_taxa a lie, so
+            # this is the caller's error to fix, in one knob or the other.
+            raise ValueError(
+                f"max_year_fraction={max_year_fraction} caps the draw at "
+                f"{sum(capacity.values())} sequences, short of the {n_taxa} "
+                f"requested, though {n_dated} dated sequences are available. "
+                f"Raise max_year_fraction or lower n_taxa."
+            )
         logger.warning(
             f"asked for {n_taxa} scaffold taxa but only {len(chosen)} dated "
             f"sequences are available"
@@ -167,7 +201,7 @@ def select_scaffold_ids(candidate_ids, years, n_taxa, seed):
 
 
 def create_scaffold_alignment(alignment_file, metadata_file, out_alignment,
-                              out_samples, n_taxa, seed):
+                              out_samples, n_taxa, seed, max_year_fraction):
     """Write the scaffold sub-alignment and the list of ids that went into it."""
     with open_sequence_file(alignment_file, "rt") as handle:
         records = list(SeqIO.parse(handle, "fasta"))
@@ -177,7 +211,7 @@ def create_scaffold_alignment(alignment_file, metadata_file, out_alignment,
     reference, rest = records[0], records[1:]
     rest_ids = [record.id for record in rest]
     years = read_collection_years(metadata_file, set(rest_ids))
-    chosen = select_scaffold_ids(rest_ids, years, n_taxa, seed)
+    chosen = select_scaffold_ids(rest_ids, years, n_taxa, seed, max_year_fraction)
 
     # Input order, not sampling order: a randomised input alignment must yield a
     # randomised scaffold, since usher-sampled places greedily in file order.
@@ -218,6 +252,10 @@ def parse_args():
                         help="How many sequences to draw, excluding the reference")
     parser.add_argument("--seed", type=int, required=True,
                         help="Random seed for the within-year draw")
+    parser.add_argument("--max-year-fraction", type=float, required=True,
+                        help="Most of one year's candidates any draw may take, "
+                             "as a fraction; floored at one sequence. 1.0 for "
+                             "no bound")
     return parser.parse_args()
 
 
@@ -230,6 +268,7 @@ def main():
         args.output_samples,
         args.n_taxa,
         args.seed,
+        args.max_year_fraction,
     )
 
 

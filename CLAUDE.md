@@ -153,18 +153,18 @@ results/
    - Reference sequences for each segment-subtype
    - Quality filtering thresholds (max_frac_gaps, max_frac_ambig)
    - Number of randomizations for tree building (n_randomizations)
-   - Number of taxa drawn into each randomization's scaffold tree (scaffold_n_taxa)
+   - Number of taxa drawn into each randomization's scaffold tree (scaffold_n_taxa), and the most any single collection year may contribute to it (scaffold_max_year_fraction)
    - Seed for sampling a tree out of the trimmed DAG (tree_sample_seed)
    - Number of threads for parallel execution
    - Geographic groups to extract for geographic subtree analysis (geographic_groups_to_extract)
    - Optional rerooting specifications for final trees (reroot)
 
 3. **scripts/**: Python scripts for specific tasks:
-   - `parse_gisaid_data.py`: Parses GISAID FASTA/metadata files and organizes by segment/subtype
+   - `parse_gisaid_data.py`: Parses GISAID FASTA/metadata files and organizes by segment/subtype. Keeps `collection_date` as the string GISAID supplied, at whichever of its three precisions that is, and fails the run on a value that is not a real date at one of them (issue #55; see "Collection dates" in the Design Notes of `README.md`)
    - `download_ref_seq.py`: Downloads reference sequences from NCBI and creates Nextclade datasets
    - `curate_and_extract_coding_seqs.py`: Curates alignments by quality metrics, extracts coding regions and per-gene unaligned coding sequences
    - `randomize_alignment.py`: Creates randomized versions of alignments for multiple tree builds
-   - `create_scaffold_alignment.py`: Subsets an alignment to `scaffold_n_taxa` sequences spread evenly over collection year, for the backbone tree each randomization is seeded with
+   - `create_scaffold_alignment.py`: Subsets an alignment to `scaffold_n_taxa` sequences spread evenly over collection year, capping any one year's contribution at `scaffold_max_year_fraction` of what it holds, for the backbone tree each randomization is seeded with
    - `trim_dag.py`: Trims suboptimal trees from merged DAGs
    - `convert_DAG_protobuf_to_newick_samples.py`: Samples representative trees from DAGs
    - `reroot_newick.py`: Reroots a newick at a named leaf via ete3 `set_outgroup`; validates the target exists, is unique, is a leaf, and ends up at the root
@@ -193,7 +193,7 @@ results/
 5. **Create Unaligned Coding Sequences** → Extracts unaligned coding sequences from curated alignments
 6. **Randomize Alignments** → Creates multiple randomized versions of alignment (n_randomizations)
 7. **Create VCF** → Converts each randomized FASTA to variant format for UShER
-8. **Build Initial Trees** → Each randomization first draws a `scaffold_n_taxa` subset spread evenly over collection year (`create_scaffold_alignment`), builds and optimizes a backbone tree from it alone (`build_scaffold_tree`), then places every remaining sequence onto that backbone with usher-sampled (`create_initial_tree`, `-i` not `-t`). Placing all 86,232 HA/H3 sequences onto an *empty* tree instead settled on a measurably worse high-level shape — issue #53. Why the backbone exists, how the draw works, and the two measurement traps involved: see the "Design Notes" section of `README.md`.
+8. **Build Initial Trees** → Each randomization first draws a `scaffold_n_taxa` subset spread evenly over collection year, with no year giving more than `scaffold_max_year_fraction` of what it holds (`create_scaffold_alignment`), builds and optimizes a backbone tree from it alone (`build_scaffold_tree`), then places every remaining sequence onto that backbone with usher-sampled (`create_initial_tree`, `-i` not `-t`). Placing all 86,232 HA/H3 sequences onto an *empty* tree instead settled on a measurably worse high-level shape — issue #53. Why the backbone exists, how the draw works, and the two measurement traps involved: see the "Design Notes" section of `README.md`.
 9. **Optimize Trees** → Refines topology for each tree with matOptimize
 10. **Convert to DAGs** → Converts each optimized tree to DAG representation (larch-usher)
 11. **Merge DAGs** → Combines all DAGs into single merged DAG (larch-dagutil)
@@ -222,7 +222,7 @@ The pipeline expects GISAID data in each input directory:
 
 ### Important Notes
 
-- Tests live in ten `scripts/test_*.py` modules (257 unittest tests: curate 91, create_scaffold_alignment 36, check_tree_sequences 31, rebase_mat_root 30, utils 21, parse_gisaid 15, extract_root_sequence 13, create_samples 9, reroot_newick 8, config_params_sync 3). Run them with `python -m unittest discover` from within `scripts/`. Under `envs/python.yaml` that reports `OK (skipped=8)`: `test_reroot_newick.py` is `skipIf`-guarded because ete3 lives in its own env, so run it separately under `envs/ete3.yaml` to actually exercise those 8 — `OK (skipped=N)` otherwise reads like a pass. No linting setup currently exists, and 9 of the 18 script modules are untested (augment_metadata, convert_DAG_protobuf_to_newick_samples, create_root_samples_file, download_ref_seq, prepare_host_annotation, prepare_subtype_annotation, randomize_alignment, simplified_host_classifier, trim_dag).
+- Tests live in ten `scripts/test_*.py` modules (275 unittest tests: curate 91, create_scaffold_alignment 44, check_tree_sequences 31, rebase_mat_root 30, parse_gisaid_data 25, utils 21, extract_root_sequence 13, create_samples 9, reroot_newick 8, config_params_sync 3). Run them with `python -m unittest discover` from within `scripts/`. Under `envs/python.yaml` that reports `OK (skipped=8)`: `test_reroot_newick.py` is `skipIf`-guarded because ete3 lives in its own env, so run it separately under `envs/ete3.yaml` to actually exercise those 8 — `OK (skipped=N)` otherwise reads like a pass. No linting setup currently exists, and 9 of the 18 script modules are untested (augment_metadata, convert_DAG_protobuf_to_newick_samples, create_root_samples_file, download_ref_seq, prepare_host_annotation, prepare_subtype_annotation, randomize_alignment, simplified_host_classifier, trim_dag).
 - The pipeline uses compressed outputs (.xz, .gz) to save disk space
 - All logs are saved in the `logs/` directory organized by segment/subtype
 - The pipeline can process multiple influenza subtypes simultaneously
