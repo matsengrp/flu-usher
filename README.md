@@ -441,7 +441,13 @@ the ambiguous value while `'mixed'` silently guesses March 4.
 `parse_gisaid_data` now fails the run on any date matching none of the three
 precisions, listing the file and up to five offending isolate ids. Blanks are
 logged but tolerated, since a blank is missing data rather than a change in what
-GISAID ships. All 56 files pass today.
+GISAID ships. All 56 files pass today. The strict `%Y-%m-%d` consumer that makes
+this check worth having is no longer in this repo: it is
+`scripts/date_filters.py:parse_iso_date` in `flu-dasm-antigenic-evo`, which
+returns `None` on a date it cannot parse and so drops the sequence from
+chronumental's node dating and the root-to-tip regression without a word. That
+is the "one repo over" named above, and it is why an impossible date has to die
+here rather than downstream.
 
 ### Rerooting: newick space, not `matUtils extract -y`
 

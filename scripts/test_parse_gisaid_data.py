@@ -465,8 +465,8 @@ class TestCollectionDatePrecision(unittest.TestCase):
         """Right shape, impossible day.
 
         A shape-only check would pass "2019-02-30" here and leave it to a
-        downstream strict %Y-%m-%d parse -- flu-dasm-antigenic-evo's
-        `date_filters.parse_iso_date` returns None, dropping the sequence from
+        downstream strict %Y-%m-%d parse -- `scripts/date_filters.py:parse_iso_date`
+        in flu-dasm-antigenic-evo returns None, dropping the sequence from
         chronumental's node dating without a word. The failure would survive,
         just quieter and one repository further away.
         """
