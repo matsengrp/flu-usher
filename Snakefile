@@ -792,7 +792,7 @@ rule create_root_fasta:
         """
 
 
-# Augment combined metadata with host_group, geographic_group, and temporal_group columns
+# Augment combined metadata with host_group and geographic_group columns
 rule augment_metadata:
     conda: "envs/python.yaml"
     input:
@@ -826,7 +826,7 @@ rule convert_to_taxonium:
             --input {input.final_tree} \
             --metadata {input.metadata} \
             --key_column isolate_id \
-            --columns isolate_name,subtype,clade,passage_history,location,host,host_group,geographic_group,temporal_group,collection_date \
+            --columns isolate_name,subtype,clade,passage_history,location,host,host_group,geographic_group,collection_date \
             --output {output} \
             &> {log}
         """
@@ -893,7 +893,7 @@ rule convert_geographic_subtree_to_taxonium:
             --input {input.tree} \
             --metadata {input.metadata} \
             --key_column isolate_id \
-            --columns isolate_name,subtype,clade,passage_history,location,host,host_group,geographic_group,temporal_group,collection_date \
+            --columns isolate_name,subtype,clade,passage_history,location,host,host_group,geographic_group,collection_date \
             --output {output} \
             &> {log}
         """

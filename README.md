@@ -40,7 +40,7 @@ flu-usher/
 │   ├── create_root_samples_file.py                 # Create samples file for root extraction
 │   ├── extract_root_sequence.py                    # Infer root sequence from tree
 │   ├── simplified_host_classifier.py               # Classify hosts into groups (used by augment_metadata.py)
-│   ├── augment_metadata.py                         # Add host, geographic, and temporal group columns to metadata
+│   ├── augment_metadata.py                         # Add host and geographic group columns to metadata
 │   ├── create_samples_file.py                      # Create samples file for subtree extraction (generic column filter)
 │   ├── prepare_host_annotation.py                  # Build 2-col CSV (isolate_id, host_group) for PastML
 │   └── prepare_subtype_annotation.py               # Build 2-col CSV (isolate_id, subtype) for PastML, normalizing "A / H5N1" → "H5N1"
@@ -148,7 +148,7 @@ flu-usher/
 
    **Global outputs**:
    - `results/combined_metadata.csv`: Aggregated metadata from all input files
-   - `results/combined_metadata_augmented.csv`: Metadata with host_group, geographic_group, and temporal_group columns added
+   - `results/combined_metadata_augmented.csv`: Metadata with host_group and geographic_group columns added
    - `results/host_annotation.csv`: 2-column (isolate_id, host_group) annotation table for PastML
    - `results/subtype_annotation.csv`: 2-column (isolate_id, subtype) annotation table for PastML (subtype normalized to `H*N*` from the raw `subtype` column)
    - `results/input_data_md5sums.txt`: Provenance manifest with md5 hashes for every input FASTA / XLS file under the configured `input_dirs`, one file per line in standard `md5sum` format (`<hash>  <path>`)
@@ -232,7 +232,6 @@ flu-usher/
 16. **Augment metadata** (`augment_metadata.py`):
     - Adds host_group column (human, avian, swine, bovine, other)
     - Adds geographic_group column (north_america, europe, asia, other)
-    - Adds temporal_group column (early, late, unknown based on global median date)
 
 17. **Extract geographic subtrees** (matUtils extract):
     - Creates separate subtrees for each configured geographic region (filter on the augmented `geographic_group` column)
@@ -254,7 +253,7 @@ flu-usher/
 
 20. **Create visualizations** (usher_to_taxonium):
     - Converts final tree and all subtrees to Taxonium format
-    - Incorporates metadata (including host, geographic, and temporal groups) for interactive exploration
+    - Incorporates metadata (including host and geographic groups, and the raw `collection_date`) for interactive exploration
 
 21. **Execute analysis notebooks** (jupyter nbconvert):
     - Runs analysis notebooks after all pipeline outputs are complete
@@ -417,16 +416,19 @@ dates: the ability to tell them apart. Hence the raw string. There is no
 precision column either, because precision is the string's length and no
 consumer needs it named.
 
-The two in-pipeline consumers already read the column as text.
+The one in-pipeline consumer already reads the column as text.
 `create_scaffold_alignment` takes `date[:4]`, so partials are usable year
 buckets and the fix strictly enlarges its candidate pool — every scaffold
 candidate in all 16 combinations is now dated, and the tightest combination,
 NA/N9, goes from 1869 dated of 2048 to all 2048, so the `scaffold_n_taxa`
 headroom described in `config.yaml` strictly increases and no combination moves
-toward usher-sampled's "No samples to place". `augment_metadata` parses strict
-`%Y-%m-%d` and sends anything else to `temporal_group="unknown"`, which is where
-the blanks already went; the recovered full dates move into `early`/`late` and
-shift the global median, and the 47,090 partials stay `unknown` by design.
+toward usher-sampled's "No samples to place". Everything downstream of that only
+displays the column: `usher_to_taxonium` passes `collection_date` into the tree
+view at whatever precision GISAID supplied. `augment_metadata` was the second
+consumer until issue #58 — it split the dates into `early`/`late` halves against
+a global median, on a strict `%Y-%m-%d` parse that left all 47,090 partials
+`unknown` — but that column was display-only as well, and the raw date shows
+the same thing at full resolution.
 
 What the raw string buys is that a consumer needing exact dates can reject
 partials instead of being handed invented ones. What it costs is that such a
@@ -439,7 +441,13 @@ the ambiguous value while `'mixed'` silently guesses March 4.
 `parse_gisaid_data` now fails the run on any date matching none of the three
 precisions, listing the file and up to five offending isolate ids. Blanks are
 logged but tolerated, since a blank is missing data rather than a change in what
-GISAID ships. All 56 files pass today.
+GISAID ships. All 56 files pass today. The strict `%Y-%m-%d` consumer that makes
+this check worth having is no longer in this repo: it is
+`scripts/date_filters.py:parse_iso_date` in `flu-dasm-antigenic-evo`, which
+returns `None` on a date it cannot parse and so drops the sequence from
+chronumental's node dating and the root-to-tip regression without a word. That
+is the "one repo over" named above, and it is why an impossible date has to die
+here rather than downstream.
 
 ### Rerooting: newick space, not `matUtils extract -y`
 

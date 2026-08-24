@@ -464,10 +464,11 @@ class TestCollectionDatePrecision(unittest.TestCase):
     def test_a_date_that_no_calendar_contains_exits_nonzero(self):
         """Right shape, impossible day.
 
-        A shape-only check would pass "2019-02-30" here and leave it to
-        augment_metadata, which parses strict %Y-%m-%d and silently returns
-        temporal_group="unknown" -- the failure would survive, just quieter and
-        one file further away.
+        A shape-only check would pass "2019-02-30" here and leave it to a
+        downstream strict %Y-%m-%d parse -- `scripts/date_filters.py:parse_iso_date`
+        in flu-dasm-antigenic-evo returns None, dropping the sequence from
+        chronumental's node dating without a word. The failure would survive,
+        just quieter and one repository further away.
         """
         for bad in ("2019-02-30", "2020-13-45", "2020-00"):
             ids = ["EPI_ISL_1", "EPI_ISL_2"]
