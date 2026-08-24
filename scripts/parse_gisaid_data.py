@@ -24,10 +24,11 @@ def is_gisaid_date(value):
 
     Shape alone is not enough: "2020-13-45" and "2019-02-30" match the pattern
     and name no day that exists. Letting them through would not make them
-    harmless, only quiet -- augment_metadata parses strict %Y-%m-%d and returns
-    temporal_group="unknown" on failure, so an impossible date would be dropped
-    from the temporal split with no error, one file downstream of here. Missing
-    precision is normal; an impossible date is a transcription error.
+    harmless, only quiet -- flu-dasm-antigenic-evo's `date_filters.parse_iso_date`
+    parses strict %Y-%m-%d and returns None on failure, so an impossible date
+    would drop out of chronumental's node dating and the root-to-tip regression
+    with no error, one repository downstream of here. Missing precision is
+    normal; an impossible date is a transcription error.
     """
     if not GISAID_DATE_PATTERN.fullmatch(value):
         return False

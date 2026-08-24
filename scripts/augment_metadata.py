@@ -1,11 +1,10 @@
 """
-Augment combined metadata with host_group, geographic_group, and temporal_group columns.
+Augment combined metadata with host_group and geographic_group columns.
 
 Reads the combined metadata CSV once, adds all grouping columns, and writes a single output file.
 """
 
 import argparse
-from datetime import datetime
 
 import pandas as pd
 
@@ -34,45 +33,9 @@ def get_geographic_group(location):
     return mapping.get(continent, "other")
 
 
-def get_temporal_group(collection_date, median_date):
-    """Assign temporal group based on median date split.
-
-    Returns 'early', 'late', or 'unknown' (for missing/invalid dates).
-    """
-    if pd.isna(collection_date) or not isinstance(collection_date, str):
-        return "unknown"
-    try:
-        dt = datetime.strptime(collection_date.strip(), "%Y-%m-%d")
-    except ValueError:
-        return "unknown"
-
-    if dt <= median_date:
-        return "early"
-    return "late"
-
-
-def compute_global_median_date(dates_series):
-    """Compute the median date from a series of date strings (YYYY-MM-DD)."""
-    valid_dates = []
-    for d in dates_series:
-        if pd.isna(d) or not isinstance(d, str):
-            continue
-        try:
-            valid_dates.append(datetime.strptime(d.strip(), "%Y-%m-%d"))
-        except ValueError:
-            continue
-
-    valid_dates.sort()
-    if not valid_dates:
-        raise ValueError("No valid dates found in collection_date column")
-
-    median_date = valid_dates[len(valid_dates) // 2]
-    return median_date
-
-
 def main():
     parser = argparse.ArgumentParser(
-        description="Augment metadata with host_group, geographic_group, and temporal_group columns"
+        description="Augment metadata with host_group and geographic_group columns"
     )
     parser.add_argument("input", help="Input CSV file (combined_metadata.csv)")
     parser.add_argument("output", help="Output CSV file with new columns added")
@@ -88,14 +51,6 @@ def main():
     # Geographic group
     df["geographic_group"] = df["location"].apply(get_geographic_group)
     logger.info("Geographic group distribution:\n" + df["geographic_group"].value_counts().to_string())
-
-    # Temporal group
-    median_date = compute_global_median_date(df["collection_date"])
-    logger.info(f"Global median collection date: {median_date.date()}")
-    df["temporal_group"] = df["collection_date"].apply(
-        lambda d: get_temporal_group(d, median_date)
-    )
-    logger.info("Temporal group distribution:\n" + df["temporal_group"].value_counts().to_string())
 
     df.to_csv(args.output, index=False)
     logger.info(f"Wrote augmented metadata to {args.output}")

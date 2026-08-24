@@ -74,6 +74,21 @@ snakemake --cores 8 --use-conda <target> --forcerun <rule_name>
 # re-derived.) The DAG is 1720 jobs since the scaffold rules added three
 # 160-job rules; count it with `snakemake -n --forceall`, as a plain `-n`
 # reports only the jobs that are out of date.
+#
+# The same head-of-DAG hazard now lives in `script_deps`, which makes each
+# script an `input:` of its own rule. `parse_gisaid_data.py` is the input of
+# the first rule in the DAG, so editing it -- even a comment or a docstring,
+# which cannot change a single output byte -- re-runs 1718 of 1720 jobs, a
+# ~29 h re-derivation. Measured on issue #58: `snakemake -n --forcerun
+# augment_metadata` reports 199 jobs with that file untouched and 1718 with a
+# docstring reworded in it. Snakemake compares mtimes and cannot see that the
+# edit was prose. Before starting a run after such an edit, check what is
+# actually scheduled, and if the cascade is spurious re-baseline it
+# deliberately -- `snakemake --touch <targets>`, or back-date the file with
+# `touch -d` -- rather than discovering it 20 hours in. Re-deriving is not
+# free beyond the wall clock: nextclade's multi-threaded output order is not
+# reproducible, so a needless rerun perturbs the curated sets and the trees
+# built from them, and any archived snapshot stops being comparable.
 snakemake -n --use-conda <target> --rerun-triggers mtime
 
 # Generate workflow visualization
@@ -88,7 +103,7 @@ The pipeline was recently reorganized from a subtype-first to a segment-first st
 ```
 results/
 ├── combined_metadata.csv                    # Aggregated metadata
-├── combined_metadata_augmented.csv          # Metadata with host_group, geographic_group, temporal_group
+├── combined_metadata_augmented.csv          # Metadata with host_group, geographic_group
 ├── HA/          # HA segment results by subtype
 │   ├── H1/      # Individual subtype results
 │   │   ├── raw_sequences.fasta.xz
@@ -173,7 +188,7 @@ results/
    - `create_root_samples_file.py`: Creates sample files for root sequence extraction
    - `extract_root_sequence.py`: Infers root sequences from tree mutations
    - `simplified_host_classifier.py`: Host classification logic (used by augment_metadata.py)
-   - `augment_metadata.py`: Adds host_group, geographic_group, and temporal_group columns to metadata
+   - `augment_metadata.py`: Adds host_group and geographic_group columns to metadata
    - `create_samples_file.py`: Creates sample files for subtree extraction by any metadata column
    - `prepare_host_annotation.py`: Builds the global 2-column (isolate_id, host_group) CSV consumed by PastML
    - `prepare_subtype_annotation.py`: Builds the global 2-column (isolate_id, subtype) CSV consumed by PastML, normalizing the raw GISAID `subtype` ("A / H5N1") to `H*N*` form inline
@@ -205,7 +220,7 @@ results/
     Both MAT-building rules (`create_mat_protobuf`, `create_final_mat`) use `usher`, not `matOptimize`, because they annotate a fixed topology and must keep it, rooting included. `matOptimize` remains correct for `optimize_tree`, which really is topology optimisation. Why, and the NA/N1 failure that established it: see "Why `usher` and not `matOptimize`" in the Design Notes of `README.md`.
 16. **Rebase MAT onto its Root** → `rebase_final_mat` moves the tree's origin from `curated_reference.fasta` onto the tree's own root, so the root carries no mutations and its sequence ships as `final_tree_root.fasta`. Reconstructing a sample from `final_tree.pb.gz` therefore starts from that file, not from the curated reference. This is pure bookkeeping: only the root's own mutation list (emptied) and each mutation's `ref_nuc` annotation (repointed) change. It is the same operation `matUtils extract -y` performed, minus its two defects — see "Rerooting" in the Design Notes of `README.md`.
 17. **Create Root Sequence** → Infers root sequence from tree or uses reference
-18. **Augment Metadata** → Adds host_group, geographic_group, and temporal_group columns
+18. **Augment Metadata** → Adds host_group and geographic_group columns
 19. **Extract Subtrees** → Creates subtrees for each configured geographic region (matUtils extract)
 20. **Infer Per-Node Host States** → Runs PastML / DOWNPASS on each `final_tree.nwk` to reconstruct `host_group` at every node; outputs `{segment}/{subtype}/host_ancestral/combined_ancestral_states.tab`
 21. **Infer Per-Node Subtype States** → Runs PastML / DOWNPASS on each `final_tree.nwk` to reconstruct `subtype` (`H*N*`, normalized from the raw GISAID `subtype` inside `prepare_subtype_annotation.py`) at every node; outputs `{segment}/{subtype}/subtype_ancestral/combined_ancestral_states.tab`. On HA per-subtype trees the H is fixed and only the inferred N partner varies (analogously for NA trees); on internal-segment trees neither letter is constrained, so the full `H*N*` can vary along the tree.
